@@ -14,7 +14,7 @@ class PokerRoundForTest(private var state: PokerRoundState) {
     private val players
         get() = state.players
 
-    private var currentPokerRoundStage: PokerRoundStage = state.pokerRoundStage
+    private val reachedPokerRoundStages = mutableSetOf<PokerRoundStage>()
 
     var afterPotResolution: (PokerRoundForTest.() -> Unit)? = null
 
@@ -33,14 +33,14 @@ class PokerRoundForTest(private var state: PokerRoundState) {
 
     private fun executePlayerCommand(command: PlayerCommand) {
         state = PokerRound(state).processCommand(command)
-        currentPokerRoundStage = state.pokerRoundStage
+        reachedPokerRoundStages.add(state.pokerRoundStage)
     }
 
     fun assertPlayerChips(playerId: Int, chips: Int) = assertEquals(chips, players[playerId].chips)
 
     fun assertWentThroughBettingRound(pokerRoundStage: PokerRoundStage) {
         assertTrue(
-            currentPokerRoundStage.ordinal >= pokerRoundStage.ordinal,
+            pokerRoundStage in reachedPokerRoundStages,
             "Poker round did not reach '$pokerRoundStage'"
         )
     }
