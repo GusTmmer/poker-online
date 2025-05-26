@@ -1,41 +1,60 @@
 package com.gustmmer.poker.round
 
+import com.gustmmer.poker.Blinds
 import com.gustmmer.poker.Player
-import com.gustmmer.poker.PlayerIO
-import com.gustmmer.poker.hasSingleActive
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withTimeoutOrNull
+import com.gustmmer.poker.onlyOneIsActive
 import kotlin.math.min
 
-class BettingRoundCoordinator(
-    roundSpec: PokerRoundSpec,
-    private val pot: Pot,
-    private val playerIO: PlayerIO,
+data class BettingRoundState(
+    val pot: Pot,
+    val lastRaiser: Player?,
+    val isComplete: Boolean,
 ) {
-    private val blinds = roundSpec.blinds
-    private val players = roundSpec.players
-    private val playerOrdering = roundSpec.playerOrdering
+    companion object {
+        fun forNewBettingRound(pot: Pot) = BettingRoundState(
+            pot = pot,
+            lastRaiser = null,
+            isComplete = false,
+        )
+    }
+}
 
-    private var lastRaiser: Player = playerOrdering.bettingPlayer()
+class BettingRoundCoordinator(
+    state: BettingRoundState,
+    private val players: List<Player>,
+    private val playerOrdering: PlayerOrdering,
+    private val blinds: Blinds,
+) {
+    private val pot = state.pot
+    private var lastRaiser = state.lastRaiser ?: playerOrdering.bettingPlayer()
 
-    suspend fun handleBetting() = coroutineScope {
+    fun processPlayerCommand(playerCommand: PlayerCommand): BettingRoundState {
         val bettingPlayers = players.filter(Player::canBet)
 
         moveToFirstPlayerWhoCanBet()
 
-        do {
-            if (!handlePlayerCommand()) {
-                continue
-            }
+        handlePlayerCommand(playerCommand)
 
-            if (bettingPlayers.hasSingleActive()) {
-                break
-            }
+        if (bettingPlayers.onlyOneIsActive()) {
+            return completeBettingRound()
+        }
 
-            moveToNextPlayerWhoCanBet()
-        } while (playerOrdering.bettingPlayer() != lastRaiser)
+        moveToNextPlayerWhoCanBet()
 
+        return if (playerOrdering.bettingPlayer() == lastRaiser) {
+            completeBettingRound()
+        } else {
+            pendingBettingRound()
+        }
+    }
+
+    private fun pendingBettingRound(): BettingRoundState {
+        return BettingRoundState(pot, lastRaiser, isComplete = false)
+    }
+
+    private fun completeBettingRound(): BettingRoundState {
         pot.reBalanceBets()
+        return BettingRoundState(pot, lastRaiser, isComplete = true)
     }
 
     private fun moveToFirstPlayerWhoCanBet() {
@@ -50,73 +69,47 @@ class BettingRoundCoordinator(
         } while (playerOrdering.bettingPlayer().let { !it.canBet() && it != lastRaiser })
     }
 
-    private suspend fun handlePlayerCommand(): Boolean {
-        val command = getCommandFromBettingPlayer()
-        val player = command.player
+    private fun handlePlayerCommand(playerCommand: PlayerCommand) {
+        println("Processing ${playerCommand.type} from ${playerCommand.player}")
 
-        return when (command.type) {
-            CommandType.FOLD -> player.fold().let { true }
-            CommandType.CALL -> handleCall(player)
-            CommandType.RAISE -> handleRaise((command as Raise).value, player)
-            CommandType.ALL_IN -> handleAllIn(player)
-        }.also {
-            println("Processed command ${command.type} for ${command.player}. Pot: $pot")
+        validateCommandIsFromExpectedPlayer(playerCommand)
+
+        when (playerCommand.type) {
+            CommandType.FOLD -> playerCommand.player.fold()
+            CommandType.CALL -> handleCall(playerCommand.player)
+            CommandType.RAISE -> handleRaise((playerCommand as Raise).value, playerCommand.player)
+            CommandType.ALL_IN -> handleAllIn(playerCommand.player)
         }
     }
 
-    private suspend fun getCommandFromBettingPlayer(): PlayerCommand {
-        val eachWaitTimeMs = 10_000
-        val maxWaitTimeMs = 60_000
-
-        var totalWaitedTimeMs = 0
-
-        while (true) {
-            var command: PlayerCommand? = null
-            withTimeoutOrNull(10_000) {
-                command = playerIO.playerCommands.receive()
-            }
-
-            if (command == null) {
-                totalWaitedTimeMs += eachWaitTimeMs
-                if (totalWaitedTimeMs < maxWaitTimeMs) {
-                    continue
-                } else {
-                    command = Fold(playerOrdering.bettingPlayer())
-                }
-            }
-
-            if (command!!.player == playerOrdering.bettingPlayer()) {
-                return command!!
-            }
+    private fun validateCommandIsFromExpectedPlayer(playerCommand: PlayerCommand) {
+        if (playerOrdering.bettingPlayer() != playerCommand.player) {
+            throw IllegalStateException("Trying to handle command from unexpected player. It's not the player's turn")
         }
     }
 
-    private fun handleCall(player: Player): Boolean {
+    private fun handleCall(player: Player) {
         pot.addPlayerChips(player, min(player.chips, pot.chipsToMatchCurrentBet(player)))
-        return true
     }
 
-    private fun handleRaise(raise: Int, player: Player): Boolean {
+    private fun handleRaise(raise: Int, player: Player) {
         if (raise < blinds.big
             || raise < pot.currentBet()
             || player.chips < pot.chipsToMatchCurrentBet(player) + raise
         ) {
-            // Invalid raise
-            /** TODO: Communicate this to the player * */
-            return false
+            throw IllegalArgumentException("Raise of $raise is invalid")
         }
 
         lastRaiser = player
         pot.addPlayerChips(player, pot.chipsToMatchCurrentBet(player) + raise)
-        return true
     }
 
-    private fun handleAllIn(player: Player): Boolean {
+    private fun handleAllIn(player: Player) {
         if (player.chips > pot.chipsToMatchCurrentBet(player)) {
             lastRaiser = player
         }
 
         pot.addPlayerChips(player, player.chips)
-        return true
     }
 }
+

@@ -1,30 +1,28 @@
 package com.gustmmer.poker.round
 
-import com.gustmmer.poker.*
-import com.gustmmer.poker.round.PokerRoundForTest.BettingRound
-import kotlinx.coroutines.test.runTest
+import com.gustmmer.poker.Blinds
 import org.junit.jupiter.api.Test
 
 class PokerRoundEarlyFinishTest {
 
     @Test
-    fun `betting round ends when only one player remains - first round`() = runTest {
+    fun `betting round ends when only one player remains - first round`() {
         PokerRoundForTest.withShuffledDeck(Blinds(200, 100), playerCount = 3, playerChips = 1000) {
             fold(0)
             fold(1)
 
-            afterPokerRound = {
+            afterPotResolution = {
                 assertPlayerChips(0, 1000)
                 assertPlayerChips(1, 900)
                 assertPlayerChips(2, 1100)
 
-                assertWentThroughBettingRound(BettingRound.BLINDS)
+                assertWentThroughBettingRound(PokerRoundStage.BET_BLINDS)
             }
         }
     }
 
     @Test
-    fun `betting round ends when only one player remains - second round`() = runTest {
+    fun `betting round ends when only one player remains - second round`() {
         PokerRoundForTest.withShuffledDeck(Blinds(200, 100), playerCount = 3, playerChips = 1000) {
             // Blinds
             fold(0)
@@ -35,18 +33,18 @@ class PokerRoundEarlyFinishTest {
             call(1)
             fold(2)
 
-            afterPokerRound = {
+            afterPotResolution = {
                 assertPlayerChips(0, 1000)
                 assertPlayerChips(1, 1200)
                 assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(BettingRound.FLOP)
+                assertWentThroughBettingRound(PokerRoundStage.BET_FLOP)
             }
         }
     }
 
     @Test
-    fun `betting round ends when only one player remains - third round`() = runTest {
+    fun `betting round ends when only one player remains - third round`() {
         PokerRoundForTest.withShuffledDeck(Blinds(200, 100), playerCount = 3, playerChips = 1000) {
             // Blinds
             call(0)
@@ -62,18 +60,18 @@ class PokerRoundEarlyFinishTest {
             fold(1)
             fold(2)
 
-            afterPokerRound = {
+            afterPotResolution = {
                 assertPlayerChips(0, 1400)
                 assertPlayerChips(1, 800)
                 assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(BettingRound.TURN)
+                assertWentThroughBettingRound(PokerRoundStage.BET_TURN)
             }
         }
     }
 
     @Test
-    fun `betting round ends when only one player remains - final round`() = runTest {
+    fun `betting round ends when only one player remains - final round`() {
         PokerRoundForTest.withShuffledDeck(Blinds(200, 100), playerCount = 3, playerChips = 1000) {
             // Blinds
             call(0)
@@ -95,12 +93,12 @@ class PokerRoundEarlyFinishTest {
             fold(2)
             fold(0)
 
-            afterPokerRound = {
+            afterPotResolution = {
                 assertPlayerChips(0, 800)
                 assertPlayerChips(1, 1400)
                 assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(BettingRound.RIVER)
+                assertWentThroughBettingRound(PokerRoundStage.BET_RIVER)
             }
         }
     }

@@ -12,12 +12,12 @@ enum class RoundStatus {
     ACTIVE,
 }
 
-class Player(private val id: Int) {
+class Player(val id: Int) {
 
     var status: PlayerStatus = PlayerStatus.ONLINE
         private set
 
-    var roundStatus = RoundStatus.ACTIVE
+    private var roundStatus = RoundStatus.ACTIVE
         private set
 
     var pocketCards = emptyList<Card>()
@@ -60,6 +60,6 @@ class Player(private val id: Int) {
 
 fun Collection<Player>.active() = filter(Player::isActive)
 
-fun Collection<Player>.hasSingleActive(): Boolean = count(Player::isActive) == 1
+fun Collection<Player>.onlyOneIsActive(): Boolean = count(Player::isActive) == 1
 
 fun Collection<Player>.canMoreThanOneBet(): Boolean = count(Player::canBet) > 1

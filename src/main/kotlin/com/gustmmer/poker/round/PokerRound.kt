@@ -1,46 +1,57 @@
 package com.gustmmer.poker.round
 
-import com.gustmmer.poker.*
-import com.gustmmer.poker.deck.Card
-import com.gustmmer.poker.deck.Deck
+import com.gustmmer.poker.Player
+import com.gustmmer.poker.active
+import com.gustmmer.poker.canMoreThanOneBet
 import com.gustmmer.poker.hand.TexasHoldEmHandEvaluator
 import com.gustmmer.poker.hand.rankings.PokerHand
+import com.gustmmer.poker.onlyOneIsActive
 import kotlin.math.min
 
-open class PokerRound(
-    private val deck: Deck,
-    private val roundSpec: PokerRoundSpec,
-    private val playerIO: PlayerIO,
-) {
-    protected constructor(pokerRound: PokerRound) : this(
-        pokerRound.deck,
-        pokerRound.roundSpec,
-        pokerRound.playerIO
-    )
 
-    private val pots = mutableListOf(Pot.mainPot(roundSpec.blinds))
+class PokerRound(state: PokerRoundState) {
+
+    private var state = state.copy()
+
+    private val players
+        get() = state.players
+
+    private val deck
+        get() = state.deck
+
+    private val pots
+        get() = state.pots
+
     private val pot
         get() = pots.last()
 
-    private val players
-        get() = roundSpec.players
+    private val communityCards
+        get() = state.communityCards
 
-    private val communityCards = mutableListOf<Card>()
+    fun start(): PokerRoundState {
+        assert(state.pokerRoundStage == PokerRoundStage.INIT)
 
-    open suspend fun execute() {
         takeBlinds()
-
         dealCards()
 
-        bettingRounds()
+        return state.toBets()
+    }
 
-        showdown()
+    fun processCommand(playerCommand: PlayerCommand): PokerRoundState {
+        assert(state.pokerRoundStage.isBettingRound())
 
-        println("Final balance: $players")
+        processPlayerCommandForBettingRound(playerCommand)
+
+        if (state.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
+            showdown()
+            println("Final balance: $players")
+        }
+
+        return state
     }
 
     private fun takeBlinds() {
-        with(roundSpec) {
+        with(state) {
             playerOrdering.smallBlindPlayer().let { pot.addPlayerChips(it, min(it.chips, blinds.small)) }
             playerOrdering.bigBlindPlayer().let { pot.addPlayerChips(it, min(it.chips, blinds.big)) }
         }
@@ -50,49 +61,32 @@ open class PokerRound(
         players.forEach { p -> p.setPocketCards(deck.draw(2)) }
     }
 
-    private fun communityCardReveal(cardCount: Int) {
+    private fun revealCommunityCards(cardCount: Int) {
+        if (cardCount == 0) {
+            return
+        }
         println("Revealed $cardCount more card(s)")
         communityCards.addAll(deck.draw(cardCount))
     }
 
-    private suspend fun bettingRounds() {
-        // Blinds
-        betting(pot, roundSpec)
-        if (players.hasSingleActive()) {
-            return
+    private fun processPlayerCommandForBettingRound(playerCommand: PlayerCommand) {
+        if (!state.pokerRoundStage.isBettingRound()) {
+            throw IllegalStateException("Round is not in betting stage")
         }
 
-        // Flop
-        communityCardReveal(3)
-        if (players.canMoreThanOneBet()) {
-            betting(Pot.bettingPot(), roundSpec.withNewPlayerOrdering { forNextBettingRound() })
-            if (players.hasSingleActive()) {
-                return
-            }
+        val newBettingRoundState =
+            BettingRoundCoordinator(state.bettingRoundState!!, players, state.playerOrdering, state.blinds)
+                .processPlayerCommand(playerCommand)
+
+        if (newBettingRoundState.isComplete) {
+            processBettingRoundResultingPot(newBettingRoundState)
         }
 
-        // Turn
-        communityCardReveal(1)
-        if (players.canMoreThanOneBet()) {
-            betting(Pot.bettingPot(), roundSpec.withNewPlayerOrdering { forNextBettingRound() })
-            if (players.hasSingleActive()) {
-                return
-            }
-        }
-
-        // River
-        communityCardReveal(1)
-        if (players.canMoreThanOneBet()) {
-            betting(Pot.bettingPot(), roundSpec.withNewPlayerOrdering { forNextBettingRound() })
-        }
+        updateRoundStateWithBettingResult(newBettingRoundState)
     }
 
-    protected open suspend fun betting(bettingPot: Pot, bettingRoundSpec: PokerRoundSpec) {
-        println("New betting round")
-
-        BettingRoundCoordinator(bettingRoundSpec, bettingPot, playerIO).handleBetting()
-
-        pot.mergeBetsFromPot(bettingPot)
+    private fun processBettingRoundResultingPot(newBettingState: BettingRoundState) {
+        pot.mergeBetsFromPot(newBettingState.pot)
 
         while (true) {
             pot.sidePotOrNull()?.let(pots::add) ?: break
@@ -102,6 +96,40 @@ open class PokerRound(
             println("Resolving pot preemptively: $autoResolvedPots")
             autoResolvedPots.forEach(Pot::resolveWinnerWithSingleActivePlayer)
             pots.removeAll(autoResolvedPots)
+        }
+    }
+
+    private fun updateRoundStateWithBettingResult(bettingRoundResult: BettingRoundState) {
+        if (!bettingRoundResult.isComplete) {
+            state = state.copy(bettingRoundState = bettingRoundResult)
+            return
+        }
+
+        if (players.onlyOneIsActive()) {
+            state = state.toShowdown()
+            return
+        }
+
+        if (!players.canMoreThanOneBet()) {
+            revealCommunityCards(5 - communityCards.size)
+            state = state.toShowdown()
+            return
+        }
+
+        if (state.pokerRoundStage.isLastBettingRound()) {
+            state = state.toShowdown()
+        } else {
+            state = state.toNextBettingStage()
+            revealCommunityCards(cardCountToRevealForRoundStage(state.pokerRoundStage))
+        }
+    }
+
+    private fun cardCountToRevealForRoundStage(pokerRoundStage: PokerRoundStage): Int {
+        return when (pokerRoundStage) {
+            PokerRoundStage.BET_FLOP -> 3
+            PokerRoundStage.BET_TURN -> 1
+            PokerRoundStage.BET_RIVER -> 1
+            else -> 0
         }
     }
 

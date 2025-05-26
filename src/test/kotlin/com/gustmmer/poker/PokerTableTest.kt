@@ -1,80 +1,79 @@
 package com.gustmmer.poker
 
-import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class PokerTableTest {
     @Test
-    fun `dealer moves clockwise after each round`() = runTest {
+    fun `dealer moves clockwise after each round`() {
         val players = listOf(
             Player(0).apply { addChips(1000) },
             Player(1).apply { addChips(1000) },
             Player(2).apply { addChips(1000) }
         )
-        val table = PokerTableForTest(
+        val table = PokerTable.new(
             players = players,
             blinds = Blinds(big = 200, small = 100),
             ruleSet = TexasHoldEm
         )
 
-        assertEquals(players[0], table.dealer)
-        table.executeNewPokerRound()
+        assertEquals(0, table.dealer.id)
+        table.newPokerRound()
 
-        assertEquals(players[1], table.dealer)
-        table.executeNewPokerRound()
+        assertEquals(1, table.dealer.id)
+        table.newPokerRound()
 
-        assertEquals(players[2], table.dealer)
-        table.executeNewPokerRound()
+        assertEquals(2, table.dealer.id)
+        table.newPokerRound()
 
-        assertEquals(players[0], table.dealer)
+        assertEquals(0, table.dealer.id)
     }
 
     @Test
-    fun `player ordering updates when players leave`() = runTest {
+    fun `player ordering updates when players leave`() {
         val players = listOf(
             Player(0).apply { addChips(1000) },
             Player(1).apply { addChips(1000) },
             Player(2).apply { addChips(1000) },
         )
-        val table = PokerTableForTest(
+        val table = PokerTable.new(
             players = players,
             blinds = Blinds(big = 200, small = 100),
             ruleSet = TexasHoldEm
         )
 
-        assertEquals(players[0], table.dealer)
-        table.executeNewPokerRound()
-        assertEquals(players[1], table.dealer)
+        assertEquals(0, table.dealer.id)
+        table.newPokerRound()
+        assertEquals(1, table.dealer.id)
 
         table.playerLeave(players[1])
-        assertEquals(players[2], table.dealer)
+        assertEquals(2, table.dealer.id)
 
-        table.executeNewPokerRound()
-        assertEquals(players[0], table.dealer)
+        table.newPokerRound()
+        assertEquals(0, table.dealer.id)
     }
 
     @Test
-    fun `player ordering updates when new players join`() = runTest {
+    fun `player ordering updates when new players join`() {
         val players = listOf(
-            Player(1).apply { addChips(1000) },
-            Player(2).apply { addChips(1000) }
+            Player(0).apply { addChips(1000) },
+            Player(1).apply { addChips(1000) }
         )
 
-        val table = PokerTableForTest(
+        val table = PokerTable.new(
             players = players,
             blinds = Blinds(big = 200, small = 100),
             ruleSet = TexasHoldEm
         )
 
-        assertEquals(players[0], table.dealer)
-        table.executeNewPokerRound()
-        assertEquals(players[1], table.dealer)
+        assertEquals(0, table.dealer.id)
+        table.newPokerRound()
+        assertEquals(1, table.dealer.id)
 
-        val newPlayer = Player(3).apply { addChips(1000) }
+        val newPlayer = Player(2).apply { addChips(1000) }
         table.playerJoin(newPlayer)
 
-        table.executeNewPokerRound()
-        assertEquals(newPlayer, table.dealer)
+        table.newPokerRound()
+        assertEquals(2, table.dealer.id)
     }
 }

@@ -4,9 +4,8 @@ package com.gustmmer.poker.deck
 class Card private constructor(val rank: Rank, val suit: Suit) : Comparable<Card> {
 
     companion object {
-        val cards: List<Card> = Suit.entries.flatMap { suit ->
-            Rank.entries.map { rank -> Card(rank, suit) }
-        }
+        val cards: List<Card> = Suit.entries.flatMap { suit -> Rank.entries.map { rank -> Card(rank, suit) } }
+
         private val cardMap: Map<Suit, Map<Rank, Card>> = cards.groupBy { it.suit }
             .mapValues { (_, cardsSameSuit) -> cardsSameSuit.associateBy { it.rank } }
 
