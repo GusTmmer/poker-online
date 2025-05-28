@@ -11,13 +11,12 @@ class PokerRoundEarlyFinishTest {
             fold(0)
             fold(1)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1000)
-                assertPlayerChips(1, 900)
-                assertPlayerChips(2, 1100)
+            // Pot resolution
+            assertPlayerChips(0, 1000)
+            assertPlayerChips(1, 900)
+            assertPlayerChips(2, 1100)
 
-                assertWentThroughBettingRound(PokerRoundStage.BET_BLINDS)
-            }
+            assertWentThroughBettingRound(PokerRoundStage.BET_BLINDS)
         }
     }
 
@@ -33,13 +32,12 @@ class PokerRoundEarlyFinishTest {
             call(1)
             fold(2)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1000)
-                assertPlayerChips(1, 1200)
-                assertPlayerChips(2, 800)
+            // Pot resolution
+            assertPlayerChips(0, 1000)
+            assertPlayerChips(1, 1200)
+            assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(PokerRoundStage.BET_FLOP)
-            }
+            assertWentThroughBettingRound(PokerRoundStage.BET_FLOP)
         }
     }
 
@@ -60,13 +58,12 @@ class PokerRoundEarlyFinishTest {
             fold(1)
             fold(2)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1400)
-                assertPlayerChips(1, 800)
-                assertPlayerChips(2, 800)
+            // Pot resolution
+            assertPlayerChips(0, 1400)
+            assertPlayerChips(1, 800)
+            assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(PokerRoundStage.BET_TURN)
-            }
+            assertWentThroughBettingRound(PokerRoundStage.BET_TURN)
         }
     }
 
@@ -93,13 +90,12 @@ class PokerRoundEarlyFinishTest {
             fold(2)
             fold(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 800)
-                assertPlayerChips(1, 1400)
-                assertPlayerChips(2, 800)
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 1400)
+            assertPlayerChips(2, 800)
 
-                assertWentThroughBettingRound(PokerRoundStage.BET_RIVER)
-            }
+            assertWentThroughBettingRound(PokerRoundStage.BET_RIVER)
         }
     }
 }

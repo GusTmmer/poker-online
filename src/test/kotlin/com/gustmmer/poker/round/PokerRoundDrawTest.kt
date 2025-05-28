@@ -34,11 +34,10 @@ class PokerRoundDrawTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1000)
-                assertPlayerChips(1, 1000)
-                assertPlayerChips(2, 1000)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 1000)
+            assertPlayerChips(1, 1000)
+            assertPlayerChips(2, 1000)
         }
     }
 
@@ -71,11 +70,10 @@ class PokerRoundDrawTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1000)
-                assertPlayerChips(1, 800)
-                assertPlayerChips(2, 500)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 1000)
+            assertPlayerChips(1, 800)
+            assertPlayerChips(2, 500)
         }
     }
 }

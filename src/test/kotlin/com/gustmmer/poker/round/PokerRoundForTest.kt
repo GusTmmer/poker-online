@@ -16,8 +16,6 @@ class PokerRoundForTest(private var state: PokerRoundState) {
 
     private val reachedPokerRoundStages = mutableSetOf<PokerRoundStage>()
 
-    var afterPotResolution: (PokerRoundForTest.() -> Unit)? = null
-
     fun fold(playerId: Int) = executePlayerCommand(Fold(players[playerId]))
     fun call(playerId: Int) = executePlayerCommand(Call(players[playerId]))
     fun raise(playerId: Int, raise: Int) = executePlayerCommand(Raise(players[playerId], raise))
@@ -27,8 +25,6 @@ class PokerRoundForTest(private var state: PokerRoundState) {
         state = PokerRound(state).start()
 
         this.block()
-
-        afterPotResolution?.let { run(it) }
     }
 
     private fun executePlayerCommand(command: PlayerCommand) {

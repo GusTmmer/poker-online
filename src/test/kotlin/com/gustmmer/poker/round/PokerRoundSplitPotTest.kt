@@ -27,11 +27,10 @@ class PokerRoundSplitPotTest {
             allIn(1)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 200)
-                assertPlayerChips(1, 600)
-                assertPlayerChips(2, 1500)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 200)
+            assertPlayerChips(1, 600)
+            assertPlayerChips(2, 1500)
         }
     }
 
@@ -51,12 +50,11 @@ class PokerRoundSplitPotTest {
             // Player 2 is already all-in from the big-blind
             call(3)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 400)
-                assertPlayerChips(1, 300)
-                assertPlayerChips(2, 800)
-                assertPlayerChips(3, 500)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 400)
+            assertPlayerChips(1, 300)
+            assertPlayerChips(2, 800)
+            assertPlayerChips(3, 500)
         }
     }
 
@@ -90,11 +88,10 @@ class PokerRoundSplitPotTest {
             fold(1)
             // Player 0 wins Player 1's last bet ($200 + self Call $200)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 700)
-                assertPlayerChips(1, 100)
-                assertPlayerChips(2, 1500)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 700)
+            assertPlayerChips(1, 100)
+            assertPlayerChips(2, 1500)
         }
     }
 }

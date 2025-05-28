@@ -15,11 +15,10 @@ class PokerRoundRaisesTest {
             fold(0)
             fold(1)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 800)
-                assertPlayerChips(1, 800)
-                assertPlayerChips(2, 1400)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 800)
+            assertPlayerChips(2, 1400)
         }
     }
 
@@ -35,11 +34,10 @@ class PokerRoundRaisesTest {
             allIn(1)
             allIn(2)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 0)
-                assertPlayerChips(1, 0)
-                assertPlayerChips(2, 3000)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 0)
+            assertPlayerChips(1, 0)
+            assertPlayerChips(2, 3000)
         }
     }
 
@@ -75,11 +73,10 @@ class PokerRoundRaisesTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 300)
-                assertPlayerChips(1, 1800)
-                assertPlayerChips(2, 3900)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 300)
+            assertPlayerChips(1, 1800)
+            assertPlayerChips(2, 3900)
         }
     }
 
@@ -124,11 +121,10 @@ class PokerRoundRaisesTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 200)
-                assertPlayerChips(1, 2600)
-                assertPlayerChips(2, 200)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 200)
+            assertPlayerChips(1, 2600)
+            assertPlayerChips(2, 200)
         }
     }
 
@@ -153,11 +149,10 @@ class PokerRoundRaisesTest {
             call(0)
             call(1)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 0)
-                assertPlayerChips(1, 3000)
-                assertPlayerChips(2, 0)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 0)
+            assertPlayerChips(1, 3000)
+            assertPlayerChips(2, 0)
         }
     }
 
@@ -191,11 +186,10 @@ class PokerRoundRaisesTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 1000)
-                assertPlayerChips(1, 1500)
-                assertPlayerChips(2, 2000)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 1000)
+            assertPlayerChips(1, 1500)
+            assertPlayerChips(2, 2000)
         }
     }
 }

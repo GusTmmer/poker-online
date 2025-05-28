@@ -34,11 +34,10 @@ class PokerRoundBlindBetsTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 800)
-                assertPlayerChips(1, 450)
-                assertPlayerChips(2, 900)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 450)
+            assertPlayerChips(2, 900)
         }
     }
 
@@ -53,11 +52,10 @@ class PokerRoundBlindBetsTest {
             // Blinds
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 800)
-                assertPlayerChips(1, 300)
-                assertPlayerChips(2, 200)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 300)
+            assertPlayerChips(2, 200)
         }
     }
 
@@ -89,11 +87,10 @@ class PokerRoundBlindBetsTest {
             call(2)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 800)
-                assertPlayerChips(1, 300)
-                assertPlayerChips(2, 400)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 300)
+            assertPlayerChips(2, 400)
         }
     }
 
@@ -130,11 +127,10 @@ class PokerRoundBlindBetsTest {
             call(1)
             call(0)
 
-            afterPotResolution = {
-                assertPlayerChips(0, 600)
-                assertPlayerChips(1, 1550)
-                assertPlayerChips(2, 0)
-            }
+            // Pot resolution
+            assertPlayerChips(0, 600)
+            assertPlayerChips(1, 1550)
+            assertPlayerChips(2, 0)
         }
     }
 }
