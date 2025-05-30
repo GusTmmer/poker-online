@@ -1,7 +1,5 @@
 package com.gustmmer.poker.round
 
-import com.gustmmer.poker.Player
-
 enum class CommandType {
     FOLD,
     CALL,
@@ -10,11 +8,11 @@ enum class CommandType {
 }
 
 sealed class PlayerCommand(
-    val player: Player,
+    val playerId: Int,
     val type: CommandType,
 )
 
-class Call(player: Player) : PlayerCommand(player, CommandType.CALL)
-class Raise(player: Player, val value: Int) : PlayerCommand(player, CommandType.RAISE)
-class AllIn(player: Player) : PlayerCommand(player, CommandType.ALL_IN)
-class Fold(player: Player) : PlayerCommand(player, CommandType.FOLD)
+class Call(playerId: Int) : PlayerCommand(playerId, CommandType.CALL)
+class Raise(playerId: Int, val value: Int) : PlayerCommand(playerId, CommandType.RAISE)
+class AllIn(playerId: Int) : PlayerCommand(playerId, CommandType.ALL_IN)
+class Fold(playerId: Int) : PlayerCommand(playerId, CommandType.FOLD)

@@ -16,10 +16,10 @@ class PokerRoundForTest(private var state: PokerRoundState) {
 
     private val reachedPokerRoundStages = mutableSetOf<PokerRoundStage>()
 
-    fun fold(playerId: Int) = executePlayerCommand(Fold(players[playerId]))
-    fun call(playerId: Int) = executePlayerCommand(Call(players[playerId]))
-    fun raise(playerId: Int, raise: Int) = executePlayerCommand(Raise(players[playerId], raise))
-    fun allIn(playerId: Int) = executePlayerCommand(AllIn(players[playerId]))
+    fun fold(playerId: Int) = executePlayerCommand(Fold(playerId))
+    fun call(playerId: Int) = executePlayerCommand(Call(playerId))
+    fun raise(playerId: Int, raise: Int) = executePlayerCommand(Raise(playerId, raise))
+    fun allIn(playerId: Int) = executePlayerCommand(AllIn(playerId))
 
     fun executeTestBlock(block: PokerRoundForTest.() -> Unit) {
         state = PokerRound(state).start()

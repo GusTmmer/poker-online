@@ -38,30 +38,30 @@ class PokerTableTest {
         table.newPokerRound()
 
         // Blinds round
-        restoreTable(tableId).processPlayerCommand(Call(players[0]))
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
-        restoreTable(tableId).processPlayerCommand(Raise(players[2], 400))
-        restoreTable(tableId).processPlayerCommand(Call(players[0]))
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
+        restoreTable(tableId).processPlayerCommand(Call(0))
+        restoreTable(tableId).processPlayerCommand(Call(1))
+        restoreTable(tableId).processPlayerCommand(Raise(2, 400))
+        restoreTable(tableId).processPlayerCommand(Call(0))
+        restoreTable(tableId).processPlayerCommand(Call(1))
 
         // Flop round
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
-        restoreTable(tableId).processPlayerCommand(Call(players[2]))
-        restoreTable(tableId).processPlayerCommand(Raise(players[0], 200))
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
-        restoreTable(tableId).processPlayerCommand(Call(players[2]))
+        restoreTable(tableId).processPlayerCommand(Call(1))
+        restoreTable(tableId).processPlayerCommand(Call(2))
+        restoreTable(tableId).processPlayerCommand(Raise(0, 200))
+        restoreTable(tableId).processPlayerCommand(Call(1))
+        restoreTable(tableId).processPlayerCommand(Call(2))
 
         // Turn round
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
-        restoreTable(tableId).processPlayerCommand(Call(players[2]))
-        restoreTable(tableId).processPlayerCommand(Call(players[0]))
+        restoreTable(tableId).processPlayerCommand(Call(1))
+        restoreTable(tableId).processPlayerCommand(Call(2))
+        restoreTable(tableId).processPlayerCommand(Call(0))
 
         // River round
-        restoreTable(tableId).processPlayerCommand(Call(players[1]))
-        restoreTable(tableId).processPlayerCommand(Call(players[2]))
-        restoreTable(tableId).processPlayerCommand(Raise(players[0], 200)) // 1000
-        restoreTable(tableId).processPlayerCommand(Fold(players[1]))
-        restoreTable(tableId).processPlayerCommand(Fold(players[2]))
+        restoreTable(tableId).processPlayerCommand(Call(1))
+        restoreTable(tableId).processPlayerCommand(Call(2))
+        restoreTable(tableId).processPlayerCommand(Raise(0, 200)) // 1000
+        restoreTable(tableId).processPlayerCommand(Fold(1))
+        restoreTable(tableId).processPlayerCommand(Fold(2))
 
         with(persistence.loadState(tableId)!!) {
             assertEquals(2600, this.players[0].chips)
@@ -154,7 +154,7 @@ class PokerTableTest {
         assertEquals(2, table.dealer.id)
     }
 
-    private fun restoreTable(id: Int): PokerTable {
-        return PokerTable.restore(id, persistence)!!
+    private fun restoreTable(tableId: Int): PokerTable {
+        return PokerTable.restore(tableId, persistence)!!
     }
 }
