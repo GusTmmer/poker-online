@@ -29,7 +29,7 @@ class BettingRoundCoordinator(
     private var lastRaiser = state.lastRaiser ?: playerOrdering.bettingPlayer()
 
     fun processPlayerCommand(playerCommand: PlayerCommand): BettingRoundState {
-        val bettingPlayers = players.filter(Player::canBet)
+        val bettingPlayers = players.filter(Player::canBet).toSet() + lastRaiser
 
         moveToFirstPlayerWhoCanBet()
 

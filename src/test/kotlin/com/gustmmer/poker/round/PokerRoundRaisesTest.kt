@@ -23,6 +23,21 @@ class PokerRoundRaisesTest {
     }
 
     @Test
+    fun `player goes all-in and steals the pot`() {
+        PokerRoundForTest.withShuffledDeck(Blinds(200, 100), 3, 1000) {
+            call(0)
+            allIn(1)
+            fold(2)
+            fold(0)
+
+            // Pot resolution
+            assertPlayerChips(0, 800)
+            assertPlayerChips(1, 1400)
+            assertPlayerChips(2, 800)
+        }
+    }
+
+    @Test
     fun `all players all-in`() {
         val setup = PokerRoundForTest.setup(Blinds(200, 100), communityCards = "K♥, 6♥, 7♥, 8♦, 9♦, 10♦")
             .withPlayer(1000, "A♠, 2♠")
