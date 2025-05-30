@@ -1,6 +1,14 @@
 package com.gustmmer.poker.deck
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
+@Serializable(with = CardSerializer::class)
 class Card private constructor(val rank: Rank, val suit: Suit) : Comparable<Card> {
 
     companion object {
@@ -18,6 +26,21 @@ class Card private constructor(val rank: Rank, val suit: Suit) : Comparable<Card
 
     override fun toString(): String {
         return "$rank$suit"
+    }
+}
+
+object CardSerializer : KSerializer<Card> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("Card", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: Card) {
+        encoder.encodeString("${value.rank}${value.suit}")
+    }
+
+    override fun deserialize(decoder: Decoder): Card {
+        val str = decoder.decodeString()
+        val rank = Rank.fromSymbol(str.substring(0, str.length - 1))
+        val suit = Suit.fromSymbol(str.last())
+        return Card.card(suit, rank)
     }
 }
 

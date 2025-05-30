@@ -4,6 +4,20 @@ import com.gustmmer.poker.Blinds
 import com.gustmmer.poker.Player
 import com.gustmmer.poker.deck.Card
 import com.gustmmer.poker.deck.Deck
+import com.gustmmer.poker.persistence.Wireable
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class WireablePokerRoundState(
+    val deck: Deck,
+    val pots: List<WireablePot>,
+    val blinds: Blinds,
+    val players: List<Int>,
+    val playerOrdering: WireablePlayerOrdering,
+    val pokerRoundStage: PokerRoundStage,
+    val bettingRoundState: WireableBettingRoundState?,
+    val communityCards: List<Card>,
+)
 
 data class PokerRoundState(
     val deck: Deck,
@@ -14,9 +28,34 @@ data class PokerRoundState(
     val pokerRoundStage: PokerRoundStage,
     val bettingRoundState: BettingRoundState?,
     val communityCards: MutableList<Card>,
-) {
+) : Wireable<WireablePokerRoundState> {
+
+    override fun toWire() = WireablePokerRoundState(
+        deck,
+        pots.map { it.toWire() },
+        blinds,
+        players.map { it.id },
+        playerOrdering.toWire(),
+        pokerRoundStage,
+        bettingRoundState?.toWire(),
+        communityCards,
+    )
 
     companion object {
+        fun restore(state: WireablePokerRoundState, playerMap: Map<Int, Player>): PokerRoundState {
+            val players = state.players.map { playerMap.getValue(it) }
+            return PokerRoundState(
+                deck = state.deck,
+                pots = state.pots.map { Pot.restore(it, playerMap) }.toMutableList(),
+                blinds = state.blinds,
+                players = players,
+                playerOrdering = PlayerOrdering.restore(state.playerOrdering, players),
+                pokerRoundStage = state.pokerRoundStage,
+                bettingRoundState = state.bettingRoundState?.let { BettingRoundState.restore(it, playerMap) },
+                communityCards = state.communityCards.toMutableList(),
+            )
+        }
+
         fun forNewRound(
             deck: Deck,
             blinds: Blinds,

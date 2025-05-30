@@ -1,13 +1,30 @@
 package com.gustmmer.poker.round
 
 import com.gustmmer.poker.Player
+import com.gustmmer.poker.persistence.Wireable
+import kotlinx.serialization.Serializable
+
+
+@Serializable
+data class WireablePlayerOrdering(
+    val dealerPos: Int,
+    val bettingPos: Int,
+)
 
 class PlayerOrdering private constructor(
     private val players: List<Player>,
     private val dealerPos: Int,
     private var bettingPos: Int,
-) {
+) : Wireable<WireablePlayerOrdering> {
     companion object {
+        fun restore(playerOrdering: WireablePlayerOrdering, players: List<Player>): PlayerOrdering {
+            return PlayerOrdering(
+                players = players,
+                dealerPos = playerOrdering.dealerPos,
+                bettingPos = playerOrdering.bettingPos,
+            )
+        }
+
         fun forNewTable(players: List<Player>): PlayerOrdering {
             val dealerPos = 0
             return PlayerOrdering(players, dealerPos, underTheGunPos(dealerPos, players.size))
@@ -26,6 +43,11 @@ class PlayerOrdering private constructor(
 
         private fun smallBlindPos(dealerPos: Int, playerCount: Int): Int = (dealerPos + 1) % playerCount
     }
+
+    override fun toWire() = WireablePlayerOrdering(
+        dealerPos,
+        bettingPos
+    )
 
     fun moveToNextBettingPos() {
         bettingPos = (bettingPos + 1) % players.size

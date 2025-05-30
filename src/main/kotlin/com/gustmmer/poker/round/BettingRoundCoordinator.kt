@@ -3,20 +3,44 @@ package com.gustmmer.poker.round
 import com.gustmmer.poker.Blinds
 import com.gustmmer.poker.Player
 import com.gustmmer.poker.onlyOneIsActive
+import com.gustmmer.poker.persistence.Wireable
+import kotlinx.serialization.Serializable
 import kotlin.math.min
+
+@Serializable
+data class WireableBettingRoundState(
+    val pot: WireablePot,
+    val lastRaiser: Int?,
+    val isComplete: Boolean,
+)
 
 data class BettingRoundState(
     val pot: Pot,
     val lastRaiser: Player?,
     val isComplete: Boolean,
-) {
+) : Wireable<WireableBettingRoundState> {
+
     companion object {
         fun forNewBettingRound(pot: Pot) = BettingRoundState(
             pot = pot,
             lastRaiser = null,
             isComplete = false,
         )
+
+        fun restore(state: WireableBettingRoundState, playerMap: Map<Int, Player>): BettingRoundState {
+            return BettingRoundState(
+                pot = Pot.restore(state.pot, playerMap),
+                lastRaiser = state.lastRaiser?.let { playerMap.getValue(it) },
+                isComplete = state.isComplete,
+            )
+        }
     }
+
+    override fun toWire(): WireableBettingRoundState = WireableBettingRoundState(
+        pot = pot.toWire(),
+        lastRaiser = lastRaiser?.id,
+        isComplete = isComplete,
+    )
 }
 
 class BettingRoundCoordinator(

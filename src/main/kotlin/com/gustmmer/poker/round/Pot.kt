@@ -2,19 +2,40 @@ package com.gustmmer.poker.round
 
 import com.gustmmer.poker.Blinds
 import com.gustmmer.poker.Player
+import com.gustmmer.poker.persistence.Wireable
+import kotlinx.serialization.Serializable
 import kotlin.math.max
 
+@Serializable
+data class WireablePot(
+    val id: Int,
+    val betsByPlayer: Map<Int, Int>,
+    val minBet: Int,
+)
+
 class Pot(
-    private val potSeqNumber: Int,
+    private val id: Int,
     private val betsByPlayer: MutableMap<Player, Int>,
-    private val blinds: Blinds? = null,
-) {
+    private val minBet: Int = 0,
+) : Wireable<WireablePot> {
 
     companion object {
+        fun restore(pot: WireablePot, playerMap: Map<Int, Player>): Pot = Pot(
+            id = pot.id,
+            betsByPlayer = pot.betsByPlayer.mapKeys { playerMap.getValue(it.key) }.toMutableMap().withDefault { 0 },
+            minBet = pot.minBet
+        )
+
         fun bettingPot(): Pot = Pot(-1, mutableMapOf<Player, Int>().withDefault { 0 })
-        fun mainPot(blinds: Blinds): Pot = Pot(0, mutableMapOf<Player, Int>().withDefault { 0 }, blinds)
-        private fun sidePot(code: Int, bets: MutableMap<Player, Int>) = Pot(code, bets)
+        fun mainPot(blinds: Blinds): Pot = Pot(0, mutableMapOf<Player, Int>().withDefault { 0 }, blinds.big)
+        private fun sidePot(id: Int, bets: MutableMap<Player, Int>) = Pot(id, bets)
     }
+
+    override fun toWire(): WireablePot = WireablePot(
+        id = id,
+        betsByPlayer = betsByPlayer.mapKeys { it.key.id },
+        minBet = minBet
+    )
 
     fun chipsToMatchCurrentBet(player: Player): Int {
         return (currentBet() - betsByPlayer.getValue(player)).also { assert(it >= 0) }
@@ -50,18 +71,17 @@ class Pot(
     }
 
     fun mergeBetsFromPot(pot: Pot) {
-        if (pot == this) {
+        if (pot.id == this.id) {
+            pot.betsByPlayer.forEach { (p, bet) -> betsByPlayer[p] = bet }
             return
         }
 
-        pot.betsByPlayer.forEach { (p, bet) ->
-            betsByPlayer[p] = betsByPlayer.getValue(p) + bet
-        }
+        pot.betsByPlayer.forEach { (p, bet) -> betsByPlayer[p] = betsByPlayer.getValue(p) + bet }
     }
 
     fun totalBets(): Int = betsByPlayer.values.sum()
 
-    fun currentBet(): Int = max(blinds?.big ?: 0, betsByPlayer.maxOfOrNull { it.value } ?: 0)
+    fun currentBet(): Int = max(minBet, betsByPlayer.maxOfOrNull { it.value } ?: 0)
 
     fun reBalanceBets() {
         if (betsByPlayer.isEmpty()) {
@@ -96,7 +116,7 @@ class Pot(
         val sidePot = potWithOnlyActivePlayers
             .mapValues { (_, bet) -> bet - minBet }
             .filterValues { it > 0 }
-            .let { sidePot(potSeqNumber + 1, it.toMutableMap()) }
+            .let { sidePot(id + 1, it.toMutableMap()) }
 
         betsByPlayer.entries.forEach { it.setValue(minBet) }
 
@@ -115,8 +135,8 @@ class Pot(
         betsByPlayer[player] = betsByPlayer.getValue(player) - chips
     }
 
-    private fun getName(): String = when (potSeqNumber) {
+    private fun getName(): String = when (id) {
         0 -> "Main Pot: "
-        else -> "Side Pot #$potSeqNumber: "
+        else -> "Side Pot #$id: "
     }
 }

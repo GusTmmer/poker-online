@@ -1,6 +1,8 @@
 package com.gustmmer.poker
 
 import com.gustmmer.poker.deck.Card
+import com.gustmmer.poker.deck.CardListSerializer
+import kotlinx.serialization.Serializable
 
 enum class PlayerStatus {
     ONLINE,
@@ -12,6 +14,7 @@ enum class RoundStatus {
     ACTIVE,
 }
 
+@Serializable
 class Player(val id: Int) {
 
     var status: PlayerStatus = PlayerStatus.ONLINE
@@ -20,6 +23,7 @@ class Player(val id: Int) {
     private var roundStatus = RoundStatus.ACTIVE
         private set
 
+    @Serializable(with = CardListSerializer::class)
     var pocketCards = emptyList<Card>()
         private set
 
