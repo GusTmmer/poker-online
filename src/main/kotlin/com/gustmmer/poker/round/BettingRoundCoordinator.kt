@@ -98,16 +98,19 @@ class BettingRoundCoordinator(
 
         validateCommandIsFromExpectedPlayer(playerCommand)
 
+        // TODO: Player command using player_id
+        val p = players.find { it.id == playerCommand.player.id }!!
+
         when (playerCommand.type) {
-            CommandType.FOLD -> playerCommand.player.fold()
-            CommandType.CALL -> handleCall(playerCommand.player)
-            CommandType.RAISE -> handleRaise((playerCommand as Raise).value, playerCommand.player)
-            CommandType.ALL_IN -> handleAllIn(playerCommand.player)
+            CommandType.FOLD -> p.fold()
+            CommandType.CALL -> handleCall(p)
+            CommandType.RAISE -> handleRaise((playerCommand as Raise).value, p)
+            CommandType.ALL_IN -> handleAllIn(p)
         }
     }
 
     private fun validateCommandIsFromExpectedPlayer(playerCommand: PlayerCommand) {
-        if (playerOrdering.bettingPlayer() != playerCommand.player) {
+        if (playerOrdering.bettingPlayer().id != playerCommand.player.id) {
             throw IllegalStateException("Trying to handle command from unexpected player. It's not the player's turn")
         }
     }
