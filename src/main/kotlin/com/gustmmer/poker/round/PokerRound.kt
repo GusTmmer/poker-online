@@ -34,7 +34,7 @@ class PokerRound(state: PokerRoundState) {
         takeBlinds()
         dealCards()
 
-        return state.toBets()
+        return state.toFirstBettingStage()
     }
 
     fun processCommand(playerCommand: PlayerCommand): PokerRoundState {

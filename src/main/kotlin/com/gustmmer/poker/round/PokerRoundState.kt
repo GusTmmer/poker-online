@@ -83,7 +83,7 @@ data class PokerRoundState(
         )
     }
 
-    fun toBets(): PokerRoundState = copy(
+    fun toFirstBettingStage(): PokerRoundState = copy(
         pokerRoundStage = PokerRoundStage.BET_BLINDS,
         bettingRoundState = BettingRoundState.forNewBettingRound(pots.last())
     )
