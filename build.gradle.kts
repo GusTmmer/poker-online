@@ -1,31 +1,30 @@
 plugins {
-    kotlin("jvm") version "2.0.0"
-    kotlin("plugin.serialization") version "2.0.0"
+    kotlin("jvm") version "2.0.0" apply false
+    kotlin("plugin.serialization") version "2.0.0" apply false
 }
 
 group = "com.gustmmer"
 version = "0.5-SNAPSHOT"
 
-repositories {
-    mavenCentral()
-}
+subprojects {
+    group = rootProject.group
+    version = rootProject.version
 
-dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    testImplementation("org.junit.jupiter:junit-jupiter-params:5.10.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    repositories {
+        mavenCentral()
+    }
 
-    implementation(kotlin("reflect"))
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-}
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
 
-tasks.test {
-    useJUnitPlatform()
-    maxHeapSize = "8192m"
-}
-
-kotlin {
-    jvmToolchain(21)
+    plugins.withType<JavaPlugin> {
+        extensions.configure<JavaPluginExtension> {
+            toolchain {
+                languageVersion.set(JavaLanguageVersion.of(21))
+            }
+        }
+    }
 }
