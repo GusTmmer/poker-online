@@ -57,7 +57,7 @@ class PlayerOrdering private constructor(
         return players[bettingPos]
     }
 
-    fun forSameHand(players: List<Player>): PlayerOrdering {
+    fun forCurrentHand(players: List<Player>): PlayerOrdering {
         return forNewHand(players, dealerPos % players.size)
     }
 

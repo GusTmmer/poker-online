@@ -37,7 +37,6 @@ class VoteManager(
         targetPlayerId: Int? = null,
     ): VoteResult {
         val key = voteKey(tableId, type, targetPlayerId)
-        val requiredVotes = (onlinePlayerCount / 2) + 1
 
         val vote = activeVotes.getOrPut(key) {
             val job = scope.launch {
@@ -48,7 +47,7 @@ class VoteManager(
                 type = type,
                 tableId = tableId,
                 targetPlayerId = targetPlayerId,
-                requiredVotes = requiredVotes,
+                requiredVotes = (onlinePlayerCount / 2) + 1,
                 job = job,
             )
         }

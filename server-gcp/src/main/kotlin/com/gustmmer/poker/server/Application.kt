@@ -60,6 +60,8 @@ fun Application.configurePlugins() {
     }
 
     install(CORS) {
+        // TODO: Evaluate 'anyHost'
+        //  Since this will have a hosted FE, this may need to be changed.
         anyHost()
         allowHeader("Content-Type")
         allowHeader("Authorization")

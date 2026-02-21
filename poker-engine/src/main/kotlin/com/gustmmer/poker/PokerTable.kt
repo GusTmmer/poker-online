@@ -50,7 +50,7 @@ class PokerTable(
 
         fun restore(
             id: Int,
-            persistence: PokerTablePersistence
+            persistence: PokerTablePersistence,
         ): PokerTable? {
             return persistence.loadState(id)?.let { PokerTable(it, persistence) }
         }
@@ -62,7 +62,7 @@ class PokerTable(
         val roundPlayers = state.players.participating()
         check(roundPlayers.size >= 2) { "Need at least 2 non-eliminated players to start a round" }
 
-        playerOrdering = playerOrdering.forSameHand(roundPlayers)
+        playerOrdering = playerOrdering.forCurrentHand(roundPlayers)
 
         val roundState = PokerRoundState.forNewRound(
             Deck.shuffled(),
@@ -138,6 +138,7 @@ class PokerTable(
                     Fold(currentPlayer.id)
                 }
             }
+
             else -> return null
         }
 
@@ -155,6 +156,8 @@ class PokerTable(
         return true
     }
 
+    // TODO: Add route to cleanly leave, possibly triggered by 'on_window_close' event in FE.
+    //  Evaluate if websocket getting closed is sufficient for this.
     fun playerLeave(playerId: Int) {
         val player = state.players.find { it.id == playerId } ?: return
         player.setAsOffline()
@@ -164,6 +167,7 @@ class PokerTable(
     fun kickPlayer(playerId: Int) {
         val player = state.players.find { it.id == playerId } ?: return
 
+        // TODO: This may be broken. Player cannot fold if not their turn.
         if (state.roundState != null && player.isActive()) {
             player.fold()
         }
@@ -223,6 +227,7 @@ class PokerTable(
             .forEach { it.setAsEliminated() }
     }
 
+    // TODO: Evaluate making 'saveState' explicit for performance and transactional reasons.
     private fun saveState() {
         state = state.copy(version = state.version + 1)
         persistence.saveState(state)

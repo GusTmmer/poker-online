@@ -51,7 +51,6 @@ data class TableInfoResponse(
     val players: List<PlayerInfo>,
     val isOpen: Boolean,
     val maxPlayers: Int,
-    val hasSession: Boolean,
     val sessionPlayerId: Int? = null,
 )
 
@@ -121,7 +120,6 @@ fun Application.configureTableRoutes(
                             players = state.players.map { PlayerInfo(it.id, it.name, it.status.name) },
                             isOpen = state.config.isOpen,
                             maxPlayers = state.config.maxPlayers,
-                            hasSession = session != null,
                             sessionPlayerId = session?.playerId,
                         )
                     )
@@ -132,7 +130,10 @@ fun Application.configureTableRoutes(
                         ?: return@post call.respond(HttpStatusCode.BadRequest, "Invalid table ID")
 
                     if (call.extractSession(jwtService, tableId) != null) {
-                        return@post call.respond(HttpStatusCode.Conflict, mapOf("error" to "Already have a session for this table"))
+                        return@post call.respond(
+                            HttpStatusCode.Conflict,
+                            mapOf("error" to "Already have a session for this table")
+                        )
                     }
 
                     val request = call.receive<JoinRequest>()
@@ -142,6 +143,8 @@ fun Application.configureTableRoutes(
                     val playerId = (table.currentState.players.maxOfOrNull { it.id } ?: -1) + 1
                     val player = Player(playerId, request.playerName)
 
+                    // TODO: Possible concurrency problem here.
+                    // TODO: If two players try to join at the same time, they can end up getting the same JWT as well as player i + 1 being created twice.
                     if (!table.playerJoin(player)) {
                         return@post call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Table is full or closed"))
                     }
@@ -199,6 +202,7 @@ fun Application.configureTableRoutes(
                     }
 
                     val player = table.currentState.players.find { it.id == session.playerId }
+                    // TODO: Evaluate if this is truly necessary.
                     if (player?.status == PlayerStatus.IDLE) {
                         player.setAsOnline()
                     }
@@ -227,7 +231,10 @@ fun Application.configureTableRoutes(
 
                     val existingRound = table.currentState.roundState
                     if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
-                        return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Round already in progress"))
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Round already in progress")
+                        )
                     }
 
                     if (existingRound != null) {
@@ -260,8 +267,13 @@ fun Application.configureTableRoutes(
 
                     val existingRound = table.currentState.roundState
                     if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
-                        return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Cannot restart during a round"))
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Cannot restart during a round")
+                        )
                     }
+
+                    // TODO: Require the game to have ended to restart the game.
 
                     if (existingRound != null) {
                         table.clearRoundState()
@@ -273,6 +285,7 @@ fun Application.configureTableRoutes(
                     call.respond(HttpStatusCode.OK, mapOf("status" to "game_restarted"))
                 }
 
+                // TODO: Rename route to set-player-online
                 post("/activate") {
                     val tableId = call.parameters["tableId"]?.toIntOrNull()
                         ?: return@post call.respond(HttpStatusCode.BadRequest, "Invalid table ID")
@@ -308,10 +321,16 @@ fun Application.configureTableRoutes(
                         ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Table not found"))
 
                     if (table.currentState.isPaused) {
+                        // TODO: Does not classify as BadRequest. Possibly change to 200 OK.
                         return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Already paused"))
                     }
 
                     val onlineCount = connectionManager.getOnlinePlayerCount(tableId)
+                    // TODO: Modify how voting works.
+                    // TODO: Currently, we're tracking only for positive votes.
+                    //  If players don't want to pause the game for instance, they cannot declare so and must wait until the timeout for the voting to actually end.
+                    //  This can cause a problem when a new voting session for the same type is started shortly after voting "no".
+                    //  In the current implementation, the voting session will still exist and the voting timeout will overlap.
                     val result = voteManager.vote(tableId, session.playerId, VoteType.PAUSE, onlineCount)
 
                     if (result.passed) {
@@ -377,14 +396,21 @@ fun Application.configureTableRoutes(
                         ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Table not found"))
 
                     val target = table.currentState.players.find { it.id == request.targetPlayerId }
-                        ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Target player not found"))
+                        ?: return@post call.respond(
+                            HttpStatusCode.NotFound,
+                            mapOf("error" to "Target player not found")
+                        )
 
                     if (target.status != PlayerStatus.OFFLINE && target.status != PlayerStatus.IDLE) {
-                        return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Can only kick offline or idle players"))
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Can only kick offline or idle players")
+                        )
                     }
 
                     val onlineCount = connectionManager.getOnlinePlayerCount(tableId)
-                    val result = voteManager.vote(tableId, session.playerId, VoteType.KICK, onlineCount, request.targetPlayerId)
+                    val result =
+                        voteManager.vote(tableId, session.playerId, VoteType.KICK, onlineCount, request.targetPlayerId)
 
                     if (result.passed) {
                         table.kickPlayer(request.targetPlayerId)

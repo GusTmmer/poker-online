@@ -1,10 +1,9 @@
 package com.gustmmer.poker.server.websocket
 
-import com.gustmmer.poker.*
+import com.gustmmer.poker.PokerTableState
 import com.gustmmer.poker.round.PokerRoundStage
 import io.ktor.websocket.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 
@@ -15,7 +14,7 @@ data class GameStateUpdate(
     val players: List<PlayerView>,
     val communityCards: List<String>,
     val potTotal: Int,
-    val currentPlayerId: Int?,
+    val nextPlayerIdToAct: Int?,
     val roundStage: String?,
     val blinds: BlindInfo,
     val isPaused: Boolean,
@@ -102,7 +101,7 @@ class TableConnectionManager {
             )
         }
 
-        val currentPlayer = roundState?.let {
+        val nextPlayerIdToAct = roundState?.let {
             if (it.pokerRoundStage.isBettingRound()) it.playerOrdering.bettingPlayer().id else null
         }
 
@@ -112,7 +111,7 @@ class TableConnectionManager {
             players = players,
             communityCards = roundState?.communityCards?.map { it.toString() } ?: emptyList(),
             potTotal = roundState?.pots?.sumOf { it.totalBets() } ?: 0,
-            currentPlayerId = currentPlayer,
+            nextPlayerIdToAct = nextPlayerIdToAct,
             roundStage = roundState?.pokerRoundStage?.name,
             blinds = BlindInfo(state.blinds.big, state.blinds.small),
             isPaused = state.isPaused,
