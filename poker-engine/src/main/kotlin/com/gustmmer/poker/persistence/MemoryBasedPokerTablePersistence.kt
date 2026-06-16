@@ -12,6 +12,7 @@ class MemoryBasedPokerTablePersistence(
 
     private val states = mutableMapOf<Int, String>()
 
+    @Synchronized
     override fun loadState(pokerTableId: Int): PokerTableState? {
         return states[pokerTableId]?.let { content ->
             try {
@@ -23,7 +24,16 @@ class MemoryBasedPokerTablePersistence(
         }
     }
 
+    @Synchronized
     override fun saveState(state: PokerTableState) {
         states[state.id] = serializer.serialize(state)
+    }
+
+    @Synchronized
+    override fun saveStateIfVersionMatches(state: PokerTableState): Boolean {
+        val currentVersion = states[state.id]?.let { serializer.deserialize(it).version } ?: 0L
+        if (currentVersion != state.version - 1) return false
+        states[state.id] = serializer.serialize(state)
+        return true
     }
 } 

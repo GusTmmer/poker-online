@@ -62,48 +62,35 @@ class PokerTable(
         val roundPlayers = state.players.participating()
         check(roundPlayers.size >= 2) { "Need at least 2 non-eliminated players to start a round" }
 
-        playerOrdering = playerOrdering.forCurrentHand(roundPlayers)
+        val newRoundsSinceEscalation = state.roundsSinceLastEscalation + 1
+        val handsPerEscalation = state.initialPlayerCount * state.config.blindEscalationOrbits
+        val newBlinds: Blinds
+        val newRoundsSince: Int
+        if (handsPerEscalation > 0 && newRoundsSinceEscalation >= handsPerEscalation) {
+            val multiplier = state.config.blindEscalationMultiplier
+            newBlinds = Blinds(
+                big = (state.blinds.big * multiplier).roundToInt(),
+                small = (state.blinds.small * multiplier).roundToInt(),
+            )
+            newRoundsSince = 0
+        } else {
+            newBlinds = state.blinds
+            newRoundsSince = newRoundsSinceEscalation
+        }
 
-        val roundState = PokerRoundState.forNewRound(
-            Deck.shuffled(),
-            state.blinds,
-            roundPlayers,
-            playerOrdering,
-        )
-
+        val roundState = PokerRoundState.forNewRound(Deck.shuffled(), newBlinds, roundPlayers, playerOrdering)
         val initializedRoundState = PokerRound(roundState).start()
 
         state = state.copy(
             playerOrdering = playerOrdering,
             roundState = initializedRoundState,
+            blinds = newBlinds,
+            roundsSinceLastEscalation = newRoundsSince,
+            gameStatus = GameStatus.RUNNING,
+            readyPlayers = emptySet(),
+            turnTimerStartedAt = null,
             initialPlayerCount = if (state.initialPlayerCount == 0) roundPlayers.size else state.initialPlayerCount,
         )
-        saveState()
-    }
-
-    fun advancePlayerOrdering() {
-        val participatingPlayers = state.players.participating()
-        playerOrdering = playerOrdering.forNextHand(participatingPlayers)
-
-        val newRoundsSinceEscalation = state.roundsSinceLastEscalation + 1
-        val handsPerEscalation = state.initialPlayerCount * state.config.blindEscalationOrbits
-
-        if (handsPerEscalation > 0 && newRoundsSinceEscalation >= handsPerEscalation) {
-            val multiplier = state.config.blindEscalationMultiplier
-            state = state.copy(
-                playerOrdering = playerOrdering,
-                blinds = Blinds(
-                    big = (state.blinds.big * multiplier).roundToInt(),
-                    small = (state.blinds.small * multiplier).roundToInt(),
-                ),
-                roundsSinceLastEscalation = 0,
-            )
-        } else {
-            state = state.copy(
-                playerOrdering = playerOrdering,
-                roundsSinceLastEscalation = newRoundsSinceEscalation,
-            )
-        }
         saveState()
     }
 
@@ -115,7 +102,12 @@ class PokerTable(
 
         state = state.copy(roundState = newRoundState)
 
-        checkForEliminations()
+        // Only check eliminations after showdown, when the pot has been fully distributed.
+        // Calling this mid-round (e.g. after an all-in) would mark players as ELIMINATED
+        // before the showdown returns their winnings.
+        if (newRoundState.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
+            checkForEliminations()
+        }
         saveState()
     }
 
@@ -167,13 +159,26 @@ class PokerTable(
     fun kickPlayer(playerId: Int) {
         val player = state.players.find { it.id == playerId } ?: return
 
-        // TODO: This may be broken. Player cannot fold if not their turn.
-        if (state.roundState != null && player.isActive()) {
-            player.fold()
+        val roundState = state.roundState
+        if (roundState != null && roundState.pokerRoundStage.isBettingRound() &&
+            roundState.playerOrdering.bettingPlayer().id == playerId
+        ) {
+            autoPlayForCurrentPlayer()
         }
 
         state.players.remove(player)
         saveState()
+    }
+
+    fun playerReady(playerId: Int): Boolean {
+        check(state.gameStatus == GameStatus.WAITING) { "Game is not in waiting state" }
+        val player = state.players.find { it.id == playerId } ?: return false
+        if (!player.isParticipating()) return false
+
+        state = state.copy(readyPlayers = state.readyPlayers + playerId)
+        saveState()
+
+        return state.players.participating().all { it.id in state.readyPlayers }
     }
 
     fun restartGame() {
@@ -195,18 +200,30 @@ class PokerTable(
             playerOrdering = PlayerOrdering.forNewTable(state.players),
             roundsSinceLastEscalation = 0,
             initialPlayerCount = 0,
+            gameStatus = GameStatus.WAITING,
+            readyPlayers = emptySet(),
+            turnTimerStartedAt = null,
         )
         saveState()
     }
 
+    fun timerStarted(epochMillis: Long) {
+        state = state.copy(turnTimerStartedAt = epochMillis)
+        saveState()
+    }
+
     fun pause(remainingTimerMs: Long?) {
-        state = state.copy(isPaused = true, turnTimeRemainingMs = remainingTimerMs)
+        state = state.copy(
+            gameStatus = GameStatus.PAUSED,
+            turnTimeRemainingMs = remainingTimerMs,
+            turnTimerStartedAt = null,
+        )
         saveState()
     }
 
     fun unpause(): Long? {
         val remaining = state.turnTimeRemainingMs
-        state = state.copy(isPaused = false, turnTimeRemainingMs = null)
+        state = state.copy(gameStatus = GameStatus.RUNNING, turnTimeRemainingMs = null)
         saveState()
         return remaining
     }
@@ -217,7 +234,17 @@ class PokerTable(
     }
 
     fun clearRoundState() {
-        state = state.copy(roundState = null)
+        val nextPlayers = state.players.participating()
+        if (nextPlayers.isNotEmpty()) {
+            playerOrdering = playerOrdering.forNextHand(nextPlayers)
+        }
+        state = state.copy(
+            roundState = null,
+            playerOrdering = playerOrdering,
+            gameStatus = GameStatus.WAITING,
+            readyPlayers = emptySet(),
+            turnTimerStartedAt = null,
+        )
         saveState()
     }
 
@@ -227,9 +254,10 @@ class PokerTable(
             .forEach { it.setAsEliminated() }
     }
 
-    // TODO: Evaluate making 'saveState' explicit for performance and transactional reasons.
     private fun saveState() {
         state = state.copy(version = state.version + 1)
-        persistence.saveState(state)
+        if (!persistence.saveStateIfVersionMatches(state)) {
+            throw ConcurrentModificationException("Concurrent modification of table ${state.id}")
+        }
     }
 }

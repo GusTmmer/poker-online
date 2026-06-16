@@ -76,17 +76,14 @@ class PokerTableTest {
         assertEquals(0, table.dealer.id)
 
         table.clearRoundState()
-        table.advancePlayerOrdering()
         table.newPokerRound()
         assertEquals(1, table.dealer.id)
 
         table.clearRoundState()
-        table.advancePlayerOrdering()
         table.newPokerRound()
         assertEquals(2, table.dealer.id)
 
         table.clearRoundState()
-        table.advancePlayerOrdering()
         table.newPokerRound()
         assertEquals(0, table.dealer.id)
     }
@@ -102,14 +99,12 @@ class PokerTableTest {
 
         assertEquals(0, table.dealer.id)
         table.clearRoundState()
-        table.advancePlayerOrdering()
         table.newPokerRound()
         assertEquals(1, table.dealer.id)
 
         table.playerJoin(Player(2, "Charlie"))
 
         table.clearRoundState()
-        table.advancePlayerOrdering()
         table.newPokerRound()
         assertEquals(2, table.dealer.id)
     }
@@ -162,7 +157,6 @@ class PokerTableTest {
 
         foldAllPlayers(table, listOf(0, 1))
         table.clearRoundState()
-        table.advancePlayerOrdering()
 
         table.restartGame()
 

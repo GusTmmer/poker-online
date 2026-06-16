@@ -17,6 +17,35 @@ enum class RoundStatus {
 }
 
 @Serializable
+data class WireablePlayer(
+    val id: Int,
+    val name: String,
+    val status: PlayerStatus = PlayerStatus.ONLINE,
+    val roundStatus: RoundStatus = RoundStatus.ACTIVE,
+    @Serializable(with = CardListSerializer::class)
+    val pocketCards: List<Card> = emptyList(),
+    val chips: Int = 0,
+)
+
+fun WireablePlayer.restore(): Player {
+    val player = Player(id, name)
+    player.addChips(chips)
+    when (status) {
+        PlayerStatus.OFFLINE -> player.setAsOffline()
+        PlayerStatus.IDLE -> player.setAsIdle()
+        PlayerStatus.ELIMINATED -> player.setAsEliminated()
+        PlayerStatus.ONLINE -> {}
+    }
+    if (pocketCards.isNotEmpty()) {
+        player.setPocketCards(pocketCards)
+    }
+    // roundStatus after setPocketCards is ACTIVE; fold if the player had folded (but isn't eliminated — setAsEliminated already sets FOLDED)
+    if (roundStatus == RoundStatus.FOLDED && status != PlayerStatus.ELIMINATED) {
+        player.fold()
+    }
+    return player
+}
+
 class Player(val id: Int, val name: String = "Player $id") {
 
     var status: PlayerStatus = PlayerStatus.ONLINE
@@ -25,7 +54,6 @@ class Player(val id: Int, val name: String = "Player $id") {
     private var roundStatus = RoundStatus.ACTIVE
         private set
 
-    @Serializable(with = CardListSerializer::class)
     var pocketCards = emptyList<Card>()
         private set
 
@@ -78,6 +106,15 @@ class Player(val id: Int, val name: String = "Player $id") {
     }
 
     fun canBet() = isActive() && chips > 0
+
+    fun toWire() = WireablePlayer(
+        id = id,
+        name = name,
+        status = status,
+        roundStatus = roundStatus,
+        pocketCards = pocketCards,
+        chips = chips,
+    )
 }
 
 fun Collection<Player>.active() = filter(Player::isActive)

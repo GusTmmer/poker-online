@@ -59,10 +59,9 @@ class FirestorePokerTablePersistence(
             .get()
     }
 
-    /**
-     * Optimistic locking: save only if the current version matches.
-     * Returns true if the write succeeded, false if a concurrent write occurred.
-     */
+    override fun saveStateIfVersionMatches(state: PokerTableState): Boolean =
+        saveStateWithVersion(state, state.version - 1)
+
     fun saveStateWithVersion(state: PokerTableState, expectedVersion: Long): Boolean {
         val docRef = firestore.collection(COLLECTION).document(state.id.toString())
 

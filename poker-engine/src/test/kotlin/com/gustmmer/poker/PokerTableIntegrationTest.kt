@@ -69,7 +69,6 @@ class PokerTableIntegrationTest {
 
         val betweenRounds = restoreTable(tableId)
         betweenRounds.clearRoundState()
-        betweenRounds.advancePlayerOrdering()
 
         // Mark player 1 as idle before starting the round
         val idleTable = restoreTable(tableId)
@@ -111,15 +110,15 @@ class PokerTableIntegrationTest {
         // ── Phase 5: Pause / Unpause ────────────────────────────────────────
 
         val pauseTable = restoreTable(tableId)
-        assertFalse(pauseTable.currentState.isPaused)
+        assertFalse(pauseTable.currentState.gameStatus == GameStatus.PAUSED)
 
         pauseTable.pause(remainingTimerMs = 15000L)
-        assertTrue(restoreTable(tableId).currentState.isPaused)
+        assertTrue(restoreTable(tableId).currentState.gameStatus == GameStatus.PAUSED)
         assertEquals(15000L, restoreTable(tableId).currentState.turnTimeRemainingMs)
 
         val remaining = restoreTable(tableId).unpause()
         assertEquals(15000L, remaining)
-        assertFalse(restoreTable(tableId).currentState.isPaused)
+        assertFalse(restoreTable(tableId).currentState.gameStatus == GameStatus.PAUSED)
         assertNull(restoreTable(tableId).currentState.turnTimeRemainingMs)
 
         // ── Phase 6: Kick a player ──────────────────────────────────────────
@@ -340,7 +339,6 @@ class PokerTableIntegrationTest {
     private fun playQuickRounds(tableId: Int, count: Int) {
         repeat(count) {
             finishCurrentRound(tableId)
-            restoreTable(tableId).advancePlayerOrdering()
             val t = restoreTable(tableId)
             if (t.currentState.players.participating().size >= 2) {
                 t.newPokerRound()
