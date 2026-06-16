@@ -119,13 +119,22 @@ class ServerIntegrationTest {
         val start2 = client.post("/api/tables/$tableId/start-round")
         assertEquals(HttpStatusCode.OK, start2.status)
 
-        // Alice votes to pause (passes immediately with 0 WS connections → requiredVotes=1)
+        // Alice votes to pause (3 participating players → requiredVotes=2, still pending after 1 vote)
         val pause1 = client.post("/api/tables/$tableId/pause")
         assertEquals(HttpStatusCode.OK, pause1.status)
         val pauseResult = Json.parseToJsonElement(pause1.bodyAsText()).jsonObject
+        val pauseSessionId = pauseResult["sessionId"]!!.jsonPrimitive.content
+
+        // Bob casts the second yes vote → vote passes, game is now paused
+        val pause2 = bob.put("/api/tables/$tableId/voting-sessions/$pauseSessionId/vote") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"vote":"yes"}""")
+        }
+        assertEquals(HttpStatusCode.OK, pause2.status)
+        val pause2Result = Json.parseToJsonElement(pause2.bodyAsText()).jsonObject
         assertTrue(
-            pauseResult["status"]!!.jsonPrimitive.content.contains("passed", ignoreCase = true),
-            "Pause should pass immediately"
+            pause2Result["outcome"]!!.jsonPrimitive.content.equals("PASSED", ignoreCase = true),
+            "Pause should pass with 2/3 votes"
         )
 
         // Verify action is blocked while paused
@@ -145,22 +154,24 @@ class ServerIntegrationTest {
         val pauseAgain = bob.post("/api/tables/$tableId/pause")
         assertEquals(HttpStatusCode.BadRequest, pauseAgain.status)
 
-        // Unpause (also passes immediately with 0 WS connections)
-        val unpauseResp = client.post("/api/tables/$tableId/unpause")
+        // Unpause: Alice and Bob both vote yes (same 2/3 majority needed)
+        val unpause1 = client.post("/api/tables/$tableId/unpause")
+        assertEquals(HttpStatusCode.OK, unpause1.status)
+        val unpauseSessionId = Json.parseToJsonElement(unpause1.bodyAsText()).jsonObject["sessionId"]!!.jsonPrimitive.content
+
+        val unpauseResp = bob.put("/api/tables/$tableId/voting-sessions/$unpauseSessionId/vote") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"vote":"yes"}""")
+        }
         assertEquals(HttpStatusCode.OK, unpauseResp.status)
 
         // Fold to end round 2
         foldUntilRoundEnds(clients, tableId)
 
-        // ── Step 8: Restart game ────────────────────────────────────────────
+        // ── Step 8: Restart game rejected while game is active ──────────────
 
         val restartResp = client.post("/api/tables/$tableId/restart-game")
-        assertEquals(HttpStatusCode.OK, restartResp.status)
-
-        val afterRestart = Json.parseToJsonElement(client.get("/api/tables/$tableId").bodyAsText()).jsonObject
-        afterRestart["players"]!!.jsonArray.forEach { p ->
-            assertEquals("ONLINE", p.jsonObject["status"]!!.jsonPrimitive.content)
-        }
+        assertEquals(HttpStatusCode.BadRequest, restartResp.status)
 
         // ── Step 9: Kick attempt (must be offline/idle) ─────────────────────
 

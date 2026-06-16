@@ -36,6 +36,7 @@ class TurnTimerManager(
             return
         }
 
+        val startedAt = Instant.now()
         val job = scope.launch {
             delay(durationMs)
             onTimerExpired(table.id)
@@ -44,10 +45,12 @@ class TurnTimerManager(
         activeTimers[table.id] = TurnTimerState(
             tableId = table.id,
             playerId = currentPlayer.id,
-            startedAt = Instant.now(),
+            startedAt = startedAt,
             durationMs = durationMs,
             job = job,
         )
+
+        runCatching { table.timerStarted(startedAt.toEpochMilli()) }
     }
 
     fun cancelTimer(tableId: Int) {
@@ -89,6 +92,13 @@ class TurnTimerManager(
                 }
                 PlayerStatus.ELIMINATED -> break
             }
+        }
+
+        // If auto-plays ended the round, transition to WAITING so clients can ready-up
+        val finalRoundState = table.currentState.roundState
+        if (finalRoundState != null && !finalRoundState.pokerRoundStage.isBettingRound()) {
+            runCatching { table.clearRoundState() }
+            connectionManager.broadcastGameState(table.currentState)
         }
     }
 

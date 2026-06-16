@@ -1,19 +1,26 @@
 package com.gustmmer.poker.server.routes
 
+import com.gustmmer.poker.GameStatus
 import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.session.JwtService
+import com.gustmmer.poker.server.timer.TurnTimerManager
+import com.gustmmer.poker.server.voting.VoteManager
+import com.gustmmer.poker.server.voting.toSummary
 import com.gustmmer.poker.server.websocket.TableConnectionManager
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import java.time.Instant
 
 fun Application.configureWebSocketRoutes(
     jwtService: JwtService,
     connectionManager: TableConnectionManager,
     persistence: PokerTablePersistence,
+    voteManager: VoteManager,
+    timerManager: TurnTimerManager,
 ) {
     routing {
         webSocket("/ws/tables/{tableId}") {
@@ -54,7 +61,25 @@ fun Application.configureWebSocketRoutes(
             }
 
             connectionManager.addConnection(tableId, session.playerId, this)
-            connectionManager.broadcastGameState(table.currentState)
+            val activeVotes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
+            connectionManager.broadcastGameState(table.currentState, activeVotes)
+
+            // Recover timer if the server restarted while a round was in progress
+            if (table.currentState.gameStatus == GameStatus.RUNNING && timerManager.getRemainingMs(tableId) == null) {
+                val durationMs = table.currentState.config.turnTimerSeconds * 1000L
+                val startedAt = table.currentState.turnTimerStartedAt
+                if (startedAt != null) {
+                    val elapsed = Instant.now().toEpochMilli() - startedAt
+                    val remaining = (durationMs - elapsed).coerceAtLeast(0L)
+                    if (remaining <= 0L) {
+                        timerManager.resolveExpiredTurns(table, durationMs)
+                    } else {
+                        timerManager.startTimer(table, remaining)
+                    }
+                } else {
+                    timerManager.startTimer(table, durationMs)
+                }
+            }
 
             try {
                 for (frame in incoming) {
@@ -71,7 +96,8 @@ fun Application.configureWebSocketRoutes(
                     if (disconnectedPlayer != null && disconnectedPlayer.status == PlayerStatus.ONLINE) {
                         disconnectedPlayer.setAsOffline()
                         persistence.saveState(currentTable.currentState)
-                        connectionManager.broadcastGameState(currentTable.currentState)
+                        val votes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
+                        connectionManager.broadcastGameState(currentTable.currentState, votes)
                     }
                 }
             }

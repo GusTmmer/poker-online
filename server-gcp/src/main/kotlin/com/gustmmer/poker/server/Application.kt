@@ -4,6 +4,7 @@ import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.config.ServerConfig
 import com.gustmmer.poker.server.persistence.FirestorePokerTablePersistence
 import com.gustmmer.poker.server.routes.configureTableRoutes
+import com.gustmmer.poker.server.routes.configureVotingRoutes
 import com.gustmmer.poker.server.routes.configureWebSocketRoutes
 import com.gustmmer.poker.server.session.JwtService
 import com.gustmmer.poker.server.timer.TurnTimerManager
@@ -15,6 +16,7 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.resources.*
 import io.ktor.server.websocket.*
 import kotlinx.serialization.json.Json
 import kotlin.time.Duration.Companion.seconds
@@ -32,23 +34,27 @@ fun Application.configureServer(
     persistence: PokerTablePersistence,
     config: ServerConfig,
 ) {
-    configurePlugins()
+    configurePlugins(config)
 
     val jwtService = JwtService(config.jwtSecret)
     val connectionManager = TableConnectionManager()
-    val voteManager = VoteManager(connectionManager)
+    val voteManager = VoteManager(connectionManager, persistence)
     val timerManager = TurnTimerManager(persistence, connectionManager)
 
     configureTableRoutes(persistence, jwtService, connectionManager, voteManager, timerManager)
-    configureWebSocketRoutes(jwtService, connectionManager, persistence)
+    configureVotingRoutes(persistence, jwtService, connectionManager, voteManager, timerManager)
+    configureWebSocketRoutes(jwtService, connectionManager, persistence, voteManager, timerManager)
 }
 
-fun Application.configurePlugins() {
+fun Application.configurePlugins(config: ServerConfig) {
+    install(Resources)
+
     install(ContentNegotiation) {
         json(Json {
             prettyPrint = false
             isLenient = true
             ignoreUnknownKeys = true
+            encodeDefaults = true
         })
     }
 
@@ -60,9 +66,7 @@ fun Application.configurePlugins() {
     }
 
     install(CORS) {
-        // TODO: Evaluate 'anyHost'
-        //  Since this will have a hosted FE, this may need to be changed.
-        anyHost()
+        if (config.allowedOrigin == "*") anyHost() else allowHost(config.allowedOrigin, schemes = listOf("https", "http"))
         allowHeader("Content-Type")
         allowHeader("Authorization")
         allowCredentials = true

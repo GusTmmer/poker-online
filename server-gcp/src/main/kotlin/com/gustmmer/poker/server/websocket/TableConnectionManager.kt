@@ -1,11 +1,23 @@
 package com.gustmmer.poker.server.websocket
 
+import com.gustmmer.poker.GameStatus
 import com.gustmmer.poker.PokerTableState
 import com.gustmmer.poker.round.PokerRoundStage
+import com.gustmmer.poker.server.voting.VoteSummary
 import io.ktor.websocket.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
+
+@Serializable
+data class VoteSummaryView(
+    val sessionId: String,
+    val resolutionType: String,
+    val targetPlayerId: Int? = null,
+    val yesCount: Int,
+    val noCount: Int,
+    val requiredVotes: Int,
+)
 
 @Serializable
 data class GameStateUpdate(
@@ -17,7 +29,9 @@ data class GameStateUpdate(
     val nextPlayerIdToAct: Int?,
     val roundStage: String?,
     val blinds: BlindInfo,
-    val isPaused: Boolean,
+    val gameStatus: String,
+    val readyPlayerIds: List<Int> = emptyList(),
+    val activeVotes: List<VoteSummaryView> = emptyList(),
     val message: String? = null,
 )
 
@@ -60,11 +74,14 @@ class TableConnectionManager {
         return connections[tableId]?.containsKey(playerId) == true
     }
 
-    suspend fun broadcastGameState(state: PokerTableState) {
+    suspend fun broadcastGameState(state: PokerTableState, activeVotes: List<VoteSummary> = emptyList()) {
         val tableConnections = connections[state.id] ?: return
+        val voteViews = activeVotes.map {
+            VoteSummaryView(it.sessionId, it.resolutionType, it.targetPlayerId, it.yesCount, it.noCount, it.requiredVotes)
+        }
 
         for ((playerId, session) in tableConnections) {
-            val update = buildGameStateUpdate(state, playerId)
+            val update = buildGameStateUpdate(state, playerId, voteViews)
             val json = Json.encodeToString(update)
             runCatching { session.send(Frame.Text(json)) }
         }
@@ -82,7 +99,7 @@ class TableConnectionManager {
         }
     }
 
-    private fun buildGameStateUpdate(state: PokerTableState, forPlayerId: Int): GameStateUpdate {
+    private fun buildGameStateUpdate(state: PokerTableState, forPlayerId: Int, activeVotes: List<VoteSummaryView> = emptyList()): GameStateUpdate {
         val roundState = state.roundState
         val isShowdown = roundState?.pokerRoundStage == PokerRoundStage.SHOWDOWN
 
@@ -114,7 +131,9 @@ class TableConnectionManager {
             nextPlayerIdToAct = nextPlayerIdToAct,
             roundStage = roundState?.pokerRoundStage?.name,
             blinds = BlindInfo(state.blinds.big, state.blinds.small),
-            isPaused = state.isPaused,
+            gameStatus = state.gameStatus.name,
+            readyPlayerIds = state.readyPlayers.toList(),
+            activeVotes = activeVotes,
         )
     }
 }

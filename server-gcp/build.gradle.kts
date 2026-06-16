@@ -18,6 +18,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.1")
     implementation("io.ktor:ktor-server-cors:3.1.1")
     implementation("io.ktor:ktor-server-auth-jwt:3.1.1")
+    implementation("io.ktor:ktor-server-resources:3.1.1")
 
     implementation("com.google.cloud:google-cloud-firestore:3.29.0")
 
@@ -30,6 +31,7 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("io.ktor:ktor-server-test-host:3.1.1")
     testImplementation("io.ktor:ktor-client-content-negotiation:3.1.1")
+    testImplementation("io.ktor:ktor-client-resources:3.1.1")
 }
 
 tasks.test {
