@@ -37,3 +37,10 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<JavaExec>("runLocal") {
+    group = "application"
+    description = "Run the server locally with in-memory persistence (no GCP credentials needed)"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.gustmmer.poker.server.LocalServerKt")
+}
