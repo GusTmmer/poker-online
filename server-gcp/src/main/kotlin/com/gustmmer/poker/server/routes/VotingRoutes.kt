@@ -1,15 +1,12 @@
 package com.gustmmer.poker.server.routes
 
-import com.gustmmer.poker.PokerTable
-import com.gustmmer.poker.isGameOver
-import com.gustmmer.poker.participating
-import com.gustmmer.poker.persistence.PokerTablePersistence
+import com.gustmmer.poker.server.service.VotingService
+import com.gustmmer.poker.server.service.respond
 import com.gustmmer.poker.server.session.JwtService
 import com.gustmmer.poker.server.session.extractSession
 import com.gustmmer.poker.server.session.respondUnauthorized
-import com.gustmmer.poker.server.timer.TurnTimerManager
-import com.gustmmer.poker.server.voting.*
-import com.gustmmer.poker.server.websocket.TableConnectionManager
+import com.gustmmer.poker.server.voting.VoteResolution
+import com.gustmmer.poker.server.voting.VoteResult
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -49,11 +46,8 @@ fun VoteResult.toResponse() = VoteSessionResponse(
 )
 
 fun Application.configureVotingRoutes(
-    persistence: PokerTablePersistence,
     jwtService: JwtService,
-    connectionManager: TableConnectionManager,
-    voteManager: VoteManager,
-    timerManager: TurnTimerManager,
+    votingService: VotingService,
 ) {
     routing {
         post<TableVotingSessionsResource> { resource ->
@@ -77,23 +71,7 @@ fun Application.configureVotingRoutes(
                 else -> return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Unknown resolution type"))
             }
 
-            val table = PokerTable.restore(tableId, persistence)
-                ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Table not found"))
-
-            if (resolution is VoteResolution.RestartGame && !table.currentState.isGameOver()) {
-                return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Cannot restart while game is still active")
-                )
-            }
-
-            val eligibleVoters = table.currentState.players.participating().map { it.id }.toSet()
-            val result = voteManager.createSession(tableId, resolution, eligibleVoters, session.playerId)
-            val activeVotes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
-
-            executeResolution(result, table, timerManager, connectionManager, activeVotes)
-
-            call.respond(HttpStatusCode.OK, result.toResponse())
+            call.respond(votingService.createSession(tableId, resolution, session.playerId))
         }
 
         put<TableVoteResource> { resource ->
@@ -110,19 +88,10 @@ fun Application.configureVotingRoutes(
                 else -> return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "vote must be 'yes' or 'no'"))
             }
 
-            val result = voteManager.castVote(sessionId, playerSession.playerId, yes)
-                ?: return@put call.respond(
-                    HttpStatusCode.NotFound,
-                    mapOf("error" to "Voting session not found or player not eligible")
-                )
+            val result = votingService.castVote(tableId, sessionId, playerSession.playerId, yes)
+                ?: return@put call.respond(HttpStatusCode.NotFound, mapOf("error" to "Voting session not found or player not eligible"))
 
-            val table = PokerTable.restore(tableId, persistence)
-                ?: return@put call.respond(HttpStatusCode.NotFound, mapOf("error" to "Table not found"))
-
-            val activeVotes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
-            executeResolution(result, table, timerManager, connectionManager, activeVotes)
-
-            call.respond(HttpStatusCode.OK, result.toResponse())
+            call.respond(result)
         }
 
         get<TableVotingSessionsResource> { resource ->
@@ -131,42 +100,7 @@ fun Application.configureVotingRoutes(
             call.extractSession(jwtService, tableId)
                 ?: return@get call.respondUnauthorized()
 
-            val sessions = voteManager.getOpenSessions(tableId).map { it.toSummary() }
-            call.respond(HttpStatusCode.OK, sessions)
+            call.respond(HttpStatusCode.OK, votingService.openSessions(tableId))
         }
     }
-}
-
-private suspend fun executeResolution(
-    result: VoteResult,
-    table: PokerTable,
-    timerManager: TurnTimerManager,
-    connectionManager: TableConnectionManager,
-    activeVotes: List<VoteSummary>,
-) {
-    if (result.outcome != VoteOutcome.PASSED) {
-        connectionManager.broadcastGameState(table.currentState, activeVotes)
-        return
-    }
-
-    val tableId = table.id
-    when (val resolution = result.session.resolution) {
-        is VoteResolution.PauseGame -> {
-            val remainingMs = timerManager.pauseTimer(tableId)
-            table.pause(remainingMs)
-        }
-        is VoteResolution.UnpauseGame -> {
-            val remainingMs = table.unpause()
-            if (remainingMs != null && remainingMs > 0) {
-                timerManager.startTimer(table, remainingMs)
-            }
-        }
-        is VoteResolution.KickPlayer -> table.kickPlayer(resolution.targetPlayerId)
-        is VoteResolution.RestartGame -> table.restartGame()
-        is VoteResolution.IncreaseBlinds -> {
-            // Blind escalation is built into newPokerRound — this resolution is a no-op for now
-        }
-    }
-
-    connectionManager.broadcastGameState(table.currentState, activeVotes)
 }

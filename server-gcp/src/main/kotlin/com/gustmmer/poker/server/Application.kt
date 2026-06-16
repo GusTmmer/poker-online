@@ -6,6 +6,8 @@ import com.gustmmer.poker.server.persistence.FirestorePokerTablePersistence
 import com.gustmmer.poker.server.routes.configureTableRoutes
 import com.gustmmer.poker.server.routes.configureVotingRoutes
 import com.gustmmer.poker.server.routes.configureWebSocketRoutes
+import com.gustmmer.poker.server.service.GameService
+import com.gustmmer.poker.server.service.VotingService
 import com.gustmmer.poker.server.session.JwtService
 import com.gustmmer.poker.server.timer.TurnTimerManager
 import com.gustmmer.poker.server.voting.VoteManager
@@ -41,8 +43,11 @@ fun Application.configureServer(
     val voteManager = VoteManager(connectionManager, persistence)
     val timerManager = TurnTimerManager(persistence, connectionManager)
 
-    configureTableRoutes(persistence, jwtService, connectionManager, voteManager, timerManager)
-    configureVotingRoutes(persistence, jwtService, connectionManager, voteManager, timerManager)
+    val gameService = GameService(persistence, connectionManager, timerManager)
+    val votingService = VotingService(persistence, voteManager, timerManager, connectionManager)
+
+    configureTableRoutes(jwtService, gameService, votingService)
+    configureVotingRoutes(jwtService, votingService)
     configureWebSocketRoutes(jwtService, connectionManager, persistence, voteManager, timerManager)
 }
 
