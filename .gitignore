@@ -63,3 +63,10 @@ replay_pid*
 
 ### Mac OS ###
 .DS_Store
+
+### Local scratch / debugging artifacts ###
+# Playwright MCP output (console/page dumps, screenshots)
+.playwright-mcp/
+# Ad-hoc screenshots dropped at the repo root (anchored so it won't
+# catch frontend assets or e2e snapshot baselines)
+/*.png
