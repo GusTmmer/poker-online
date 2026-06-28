@@ -9,22 +9,27 @@ import com.gustmmer.poker.server.routes.JoinResponse
 import com.gustmmer.poker.server.routes.PlayerInfo
 import com.gustmmer.poker.server.routes.TableInfoResponse
 import com.gustmmer.poker.server.timer.TurnTimerManager
-import com.gustmmer.poker.server.websocket.TableConnectionManager
 import io.ktor.http.HttpStatusCode
+import org.slf4j.LoggerFactory
 
 data class CreatedTable(val tableId: Int, val playerId: Int)
 
 /**
- * Orchestrates table lifecycle and in-round actions: restoring the table, applying the mutation,
- * persisting (with optimistic-concurrency retry via [withTable]), broadcasting the new state, and
- * deciding on the resulting turn-timer transition. Routes only decode requests and map results to
- * HTTP responses — every domain decision here was previously inline in the route handlers.
+ * Orchestrates table lifecycle and in-round actions. Each mutating operation follows one shape:
+ * validate and stage mutations inside a single [withTable] block (which commits once, with
+ * optimistic-concurrency retry), then run the post-commit turn-timer transition. The WebSocket
+ * broadcast is NOT triggered here — the commit itself drives it: every committed change is delivered
+ * to clients by the [com.gustmmer.poker.server.bus.TableUpdateBus] subscription in
+ * [TableConnectionManager]. Mutators never persist on their own, so a logical operation is exactly one
+ * versioned write, and one write == one fan-out.
  */
 class GameService(
     private val persistence: PokerTablePersistence,
-    private val connectionManager: TableConnectionManager,
     private val timerManager: TurnTimerManager,
 ) {
+    private val log = LoggerFactory.getLogger(GameService::class.java)
+
+    private fun turnTimerMs(state: PokerTableState) = state.config.turnTimerSeconds * 1000L
 
     fun createTable(request: CreateTableRequest): CreatedTable {
         val config = TableConfig(
@@ -42,9 +47,13 @@ class GameService(
         return CreatedTable(tableId = table.id, playerId = playerId)
     }
 
-    fun getTableInfo(tableId: Int, sessionPlayerId: Int?): ServiceResult<TableInfoResponse> {
-        val state = persistence.loadState(tableId)
+    suspend fun getTableInfo(tableId: Int, sessionPlayerId: Int?): ServiceResult<TableInfoResponse> {
+        val state = loadTable(tableId, persistence)
             ?: return ServiceResult.Failed(HttpStatusCode.NotFound, "Table not found")
+
+        val nextPlayerIdToAct = state.roundState?.let { round ->
+            if (round.pokerRoundStage.isBettingRound()) round.playerOrdering.bettingPlayer().id else null
+        }
 
         return ServiceResult.Ok(
             TableInfoResponse(
@@ -55,22 +64,22 @@ class GameService(
                 sessionPlayerId = sessionPlayerId,
                 hasSession = sessionPlayerId != null,
                 gameStatus = state.gameStatus.name,
+                nextPlayerIdToAct = nextPlayerIdToAct,
             )
         )
     }
 
-    suspend fun joinTable(tableId: Int, playerName: String): ServiceResult<JoinResponse> =
-        withTable(tableId, persistence) { table ->
+    suspend fun joinTable(tableId: Int, playerName: String): ServiceResult<JoinResponse> {
+        val result = withTable(tableId, persistence) { table ->
             val playerId = (table.currentState.players.maxOfOrNull { it.id } ?: -1) + 1
-            val player = Player(playerId, playerName)
-
-            if (!table.playerJoin(player)) {
+            if (!table.playerJoin(Player(playerId, playerName))) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.Forbidden, "Table is full or closed")
             }
-
-            connectionManager.broadcastGameState(table.currentState)
             ServiceResult.Ok(JoinResponse(playerId = playerId, playerName = playerName), HttpStatusCode.Created)
         }
+        // Broadcast is driven by the commit (the bus subscription), so there's nothing to push here.
+        return result
+    }
 
     suspend fun applyAction(tableId: Int, playerId: Int, request: ActionRequest): ServiceResult<Map<String, String>> {
         val command: PlayerCommand = when (request.type.uppercase()) {
@@ -81,10 +90,9 @@ class GameService(
             else -> return ServiceResult.Failed(HttpStatusCode.BadRequest, "Invalid action")
         }
 
-        return withTable(tableId, persistence) { table ->
+        val result = withTable(tableId, persistence) { table ->
             val roundState = table.currentState.roundState
                 ?: return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "No round in progress")
-
             if (table.currentState.gameStatus == GameStatus.PAUSED) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Game is paused")
             }
@@ -95,56 +103,66 @@ class GameService(
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Not your turn")
             }
 
-            val player = table.currentState.players.find { it.id == playerId }
-            if (player?.status == PlayerStatus.IDLE) {
-                player.setAsOnline()
-            }
-
+            // Acting un-idles the player; this and the command commit together. An invalid command
+            // throws before staging anything, so nothing is committed (the dirty flag stays clear).
+            table.setPlayerOnline(playerId)
             try {
-                timerManager.cancelTimer(tableId)
                 table.processPlayerCommand(command)
-                connectionManager.broadcastGameState(table.currentState)
-
-                val newRound = table.currentState.roundState
-                if (newRound != null && newRound.pokerRoundStage.isBettingRound()) {
-                    timerManager.startTimer(table, table.currentState.config.turnTimerSeconds * 1000L)
-                } else if (newRound != null) {
-                    // Round ended (SHOWDOWN or preemptive) — transition to WAITING for ready-up
-                    table.clearRoundState()
-                    connectionManager.broadcastGameState(table.currentState)
-                }
-
-                ServiceResult.Ok(mapOf("status" to "ok"))
             } catch (e: IllegalArgumentException) {
-                ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid action")
+                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid action")
+            } catch (e: IllegalStateException) {
+                log.error("Invalid game state applying action for player {} on table {}", playerId, tableId, e)
+                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid game state")
             }
+
+            val newRound = table.currentState.roundState
+            if (newRound != null && !newRound.pokerRoundStage.isBettingRound()) {
+                // Round ended (SHOWDOWN or preemptive) — transition to WAITING for ready-up.
+                table.clearRoundState()
+            }
+            ServiceResult.Ok(mapOf("status" to "ok"))
+        }
+
+        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        return result
+    }
+
+    /**
+     * Post-commit timer transition shared by action/activation flows: start the next player's timer
+     * when a betting round is live, otherwise stop it. The timer start itself commits (persisting the
+     * deadline), which the bus then fans out — so no explicit broadcast is needed here.
+     */
+    private suspend fun advanceTimer(tableId: Int) {
+        val state = loadTable(tableId, persistence)
+        val roundState = state?.roundState
+        if (state != null && state.gameStatus == GameStatus.RUNNING &&
+            roundState != null && roundState.pokerRoundStage.isBettingRound()
+        ) {
+            timerManager.startTimer(tableId, turnTimerMs(state))
+        } else {
+            timerManager.cancelTimer(tableId)
         }
     }
 
-    suspend fun startRound(tableId: Int): ServiceResult<Map<String, String>> =
-        withTable(tableId, persistence) { table ->
+    suspend fun startRound(tableId: Int): ServiceResult<Map<String, String>> {
+        val result = withTable(tableId, persistence) { table ->
             val existingRound = table.currentState.roundState
             if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Round already in progress")
             }
-            if (existingRound != null) {
-                table.clearRoundState()
-            }
-
-            val participating = table.currentState.players.participating()
-            if (participating.size < 2) {
+            if (table.currentState.players.participating().size < 2) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Need at least 2 players")
             }
-
+            if (existingRound != null) table.clearRoundState()
             table.newPokerRound()
-            connectionManager.broadcastGameState(table.currentState)
-            timerManager.startTimer(table, table.currentState.config.turnTimerSeconds * 1000L)
-
             ServiceResult.Ok(mapOf("status" to "round_started"))
         }
+        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        return result
+    }
 
-    suspend fun restartGame(tableId: Int): ServiceResult<Map<String, String>> =
-        withTable(tableId, persistence) { table ->
+    suspend fun restartGame(tableId: Int): ServiceResult<Map<String, String>> {
+        val result = withTable(tableId, persistence) { table ->
             val existingRound = table.currentState.roundState
             if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Cannot restart during a round")
@@ -155,18 +173,16 @@ class GameService(
                     "Cannot restart while the game is still active"
                 )
             }
-            if (existingRound != null) {
-                table.clearRoundState()
-            }
-
+            if (existingRound != null) table.clearRoundState()
             table.restartGame()
-            connectionManager.broadcastGameState(table.currentState)
-
             ServiceResult.Ok(mapOf("status" to "game_restarted"))
         }
+        return result
+    }
 
-    suspend fun readyUp(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> =
-        withTable(tableId, persistence) { table ->
+    suspend fun readyUp(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
+        var roundStarted = false
+        val result = withTable(tableId, persistence) { table ->
             if (table.currentState.gameStatus != GameStatus.WAITING) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Game is not in waiting state")
             }
@@ -178,55 +194,61 @@ class GameService(
             }
 
             val allReady = table.playerReady(playerId)
-            connectionManager.broadcastGameState(table.currentState)
-
             if (allReady) {
-                if (table.currentState.roundState != null) {
-                    table.clearRoundState()
-                }
+                if (table.currentState.roundState != null) table.clearRoundState()
                 table.newPokerRound()
-                connectionManager.broadcastGameState(table.currentState)
-                timerManager.startTimer(table, table.currentState.config.turnTimerSeconds * 1000L)
             }
-
+            roundStarted = allReady
             ServiceResult.Ok(mapOf("status" to if (allReady) "round_started" else "ready"))
         }
+        if (result is ServiceResult.Ok && roundStarted) advanceTimer(tableId)
+        return result
+    }
 
     // TODO: Rename route to set-player-online
     suspend fun setPlayerOnline(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
-        val table = PokerTable.restore(tableId, persistence)
-            ?: return ServiceResult.Failed(HttpStatusCode.NotFound, "Table not found")
+        // Online flip + any auto-unpause stage together and commit once; the timer cascade runs after.
+        var unpaused = false
+        val result = withTable(tableId, persistence) { table ->
+            val player = table.currentState.players.find { it.id == playerId }
+                ?: return@withTable ServiceResult.Failed(HttpStatusCode.NotFound, "Player not found")
+            if (player.status == PlayerStatus.ELIMINATED) {
+                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Player cannot be activated")
+            }
 
-        val player = table.currentState.players.find { it.id == playerId }
-            ?: return ServiceResult.Failed(HttpStatusCode.NotFound, "Player not found")
-
-        if (player.status != PlayerStatus.IDLE) {
-            return ServiceResult.Failed(HttpStatusCode.BadRequest, "Player is not idle")
+            table.setPlayerOnline(playerId)
+            // Auto-unpause: game was paused because the majority were idle and now they aren't.
+            if (table.currentState.gameStatus == GameStatus.PAUSED && !table.currentState.majorityIdle()) {
+                table.unpause()
+                unpaused = true
+            }
+            ServiceResult.Ok(mapOf("status" to "activated"))
         }
+        if (result !is ServiceResult.Ok) return result
 
-        player.setAsOnline()
-        persistence.saveState(table.currentState)
-        connectionManager.broadcastGameState(table.currentState)
-
-        val roundState = table.currentState.roundState
-        if (roundState != null &&
-            table.currentState.gameStatus == GameStatus.RUNNING &&
-            roundState.pokerRoundStage.isBettingRound() &&
-            roundState.playerOrdering.bettingPlayer().id == playerId
-        ) {
-            timerManager.startTimer(table, table.currentState.config.turnTimerSeconds * 1000L)
+        val state = loadTable(tableId, persistence)
+        if (state != null) {
+            if (unpaused) {
+                timerManager.resolveExpiredTurns(tableId, turnTimerMs(state))
+            } else {
+                val roundState = state.roundState
+                if (roundState != null &&
+                    state.gameStatus == GameStatus.RUNNING &&
+                    roundState.pokerRoundStage.isBettingRound() &&
+                    roundState.playerOrdering.bettingPlayer().id == playerId
+                ) {
+                    timerManager.startTimer(tableId, turnTimerMs(state))
+                }
+            }
         }
-
-        return ServiceResult.Ok(mapOf("status" to "activated"))
+        return result
     }
 
     suspend fun updateSettings(tableId: Int, isOpen: Boolean): ServiceResult<Map<String, String>> {
-        val table = PokerTable.restore(tableId, persistence)
-            ?: return ServiceResult.Failed(HttpStatusCode.NotFound, "Table not found")
-
-        table.updateConfig(isOpen = isOpen)
-        connectionManager.broadcastGameState(table.currentState)
-
-        return ServiceResult.Ok(mapOf("status" to "settings_updated"))
+        val result = withTable(tableId, persistence) { table ->
+            table.updateConfig(isOpen = isOpen)
+            ServiceResult.Ok(mapOf("status" to "settings_updated"))
+        }
+        return result
     }
 }

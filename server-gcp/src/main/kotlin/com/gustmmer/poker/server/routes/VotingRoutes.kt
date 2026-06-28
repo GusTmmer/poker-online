@@ -1,12 +1,13 @@
 package com.gustmmer.poker.server.routes
 
+import com.gustmmer.poker.ActiveVote
 import com.gustmmer.poker.server.service.VotingService
 import com.gustmmer.poker.server.service.respond
 import com.gustmmer.poker.server.session.JwtService
 import com.gustmmer.poker.server.session.extractSession
 import com.gustmmer.poker.server.session.respondUnauthorized
+import com.gustmmer.poker.server.voting.VoteOutcome
 import com.gustmmer.poker.server.voting.VoteResolution
-import com.gustmmer.poker.server.voting.VoteResult
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -35,13 +36,13 @@ data class VoteSessionResponse(
     val outcome: String,
 )
 
-fun VoteResult.toResponse() = VoteSessionResponse(
-    sessionId = session.id,
-    resolutionType = session.resolution.typeName,
-    targetPlayerId = session.resolution.kickTargetId,
-    yesCount = session.yesVoters.size,
-    noCount = session.noVoters.size,
-    requiredVotes = session.requiredVotes,
+fun ActiveVote.toResponse(outcome: VoteOutcome) = VoteSessionResponse(
+    sessionId = id,
+    resolutionType = resolutionType,
+    targetPlayerId = targetPlayerId,
+    yesCount = yesVoters.size,
+    noCount = noVoters.size,
+    requiredVotes = requiredVotes,
     outcome = outcome.name,
 )
 
@@ -67,7 +68,6 @@ fun Application.configureVotingRoutes(
                     VoteResolution.KickPlayer(target)
                 }
                 "RESTART_GAME" -> VoteResolution.RestartGame
-                "INCREASE_BLINDS" -> VoteResolution.IncreaseBlinds
                 else -> return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Unknown resolution type"))
             }
 

@@ -1,23 +1,19 @@
 package com.gustmmer.poker.server.persistence
 
+import com.google.cloud.Timestamp
 import com.google.cloud.firestore.Firestore
-import com.google.cloud.firestore.FirestoreOptions
 import com.gustmmer.poker.PokerTableState
 import com.gustmmer.poker.WireablePokerTableState
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 class FirestorePokerTablePersistence(
-    projectId: String,
+    private val firestore: Firestore,
 ) : PokerTablePersistence {
-
-    private val firestore: Firestore = FirestoreOptions.newBuilder()
-        .setProjectId(projectId)
-        .build()
-        .service
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -37,26 +33,22 @@ class FirestorePokerTablePersistence(
             val wireable = json.decodeFromString<WireablePokerTableState>(stateJson)
             PokerTableState.restore(wireable)
         } catch (e: Exception) {
-            println("Error loading state for table $pokerTableId: ${e.message}")
+            log.error("Error loading state for table {}", pokerTableId, e)
             null
         }
     }
 
-    override fun saveState(state: PokerTableState) {
-        val wireable = state.toWire()
-        val stateJson = json.encodeToString(wireable)
+    /**
+     * Builds the Firestore document. [FIELD_EXPIRES_AT] is stored as a Firestore [Timestamp] (not a
+     * string) so the collection's native TTL policy actually deletes expired tables.
+     */
+    private fun documentFields(state: PokerTableState): Map<String, Any> {
         val expiresAt = Instant.now().plus(TTL_HOURS, ChronoUnit.HOURS)
-
-        firestore.collection(COLLECTION)
-            .document(state.id.toString())
-            .set(
-                mapOf(
-                    FIELD_STATE to stateJson,
-                    FIELD_VERSION to state.version,
-                    FIELD_EXPIRES_AT to expiresAt.toString(),
-                )
-            )
-            .get()
+        return mapOf(
+            FIELD_STATE to json.encodeToString(state.toWire()),
+            FIELD_VERSION to state.version,
+            FIELD_EXPIRES_AT to Timestamp.ofTimeSecondsAndNanos(expiresAt.epochSecond, expiresAt.nano),
+        )
     }
 
     override fun saveStateIfVersionMatches(state: PokerTableState): Boolean =
@@ -73,18 +65,7 @@ class FirestorePokerTablePersistence(
                 return@runTransaction false
             }
 
-            val wireable = state.toWire()
-            val stateJson = json.encodeToString(wireable)
-            val expiresAt = Instant.now().plus(TTL_HOURS, ChronoUnit.HOURS)
-
-            transaction.set(
-                docRef,
-                mapOf(
-                    FIELD_STATE to stateJson,
-                    FIELD_VERSION to state.version,
-                    FIELD_EXPIRES_AT to expiresAt.toString(),
-                )
-            )
+            transaction.set(docRef, documentFields(state))
             true
         }.get()
     }
@@ -97,6 +78,7 @@ class FirestorePokerTablePersistence(
     }
 
     companion object {
+        private val log = LoggerFactory.getLogger(FirestorePokerTablePersistence::class.java)
         private const val COLLECTION = "tables"
         private const val FIELD_STATE = "state"
         private const val FIELD_VERSION = "version"

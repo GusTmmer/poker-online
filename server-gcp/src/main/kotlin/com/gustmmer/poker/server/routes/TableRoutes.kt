@@ -1,5 +1,6 @@
 package com.gustmmer.poker.server.routes
 
+import com.gustmmer.poker.server.MutationRateLimit
 import com.gustmmer.poker.server.service.GameService
 import com.gustmmer.poker.server.service.ServiceResult
 import com.gustmmer.poker.server.service.VotingService
@@ -9,6 +10,7 @@ import com.gustmmer.poker.server.session.extractSession
 import com.gustmmer.poker.server.session.respondUnauthorized
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.request.*
 import io.ktor.server.resources.*
 import io.ktor.server.response.*
@@ -52,6 +54,7 @@ data class TableInfoResponse(
     val sessionPlayerId: Int? = null,
     val hasSession: Boolean = false,
     val gameStatus: String = "WAITING",
+    val nextPlayerIdToAct: Int? = null,
 )
 
 @Serializable
@@ -63,28 +66,59 @@ fun Application.configureTableRoutes(
     votingService: VotingService,
 ) {
     routing {
-        post<TablesResource> {
-            val request = call.receive<CreateTableRequest>()
-            val created = gameService.createTable(request)
+        // Rate-limit the two endpoints that create Firestore documents — the cheapest abuse vector.
+        rateLimit(MutationRateLimit) {
+            post<TablesResource> {
+                val request = call.receive<CreateTableRequest>()
+                val created = gameService.createTable(request)
 
-            val token = jwtService.createToken(created.tableId, created.playerId)
-            call.response.cookies.append(
-                Cookie(
-                    name = jwtService.cookieName(created.tableId),
-                    value = token,
-                    path = "/",
-                    httpOnly = true,
+                val token = jwtService.createToken(created.tableId, created.playerId)
+                call.response.cookies.append(
+                    Cookie(
+                        name = jwtService.cookieName(created.tableId),
+                        value = token,
+                        path = "/",
+                        httpOnly = true,
+                    )
                 )
-            )
 
-            call.respond(
-                HttpStatusCode.Created,
-                CreateTableResponse(
-                    tableId = created.tableId,
-                    joinLink = "/table/${created.tableId}",
-                    playerId = created.playerId,
+                call.respond(
+                    HttpStatusCode.Created,
+                    CreateTableResponse(
+                        tableId = created.tableId,
+                        joinLink = "/table/${created.tableId}",
+                        playerId = created.playerId,
+                    )
                 )
-            )
+            }
+
+            post<TablePlayersResource> { resource ->
+                val tableId = resource.tableId
+
+                if (call.extractSession(jwtService, tableId) != null) {
+                    return@post call.respond(
+                        HttpStatusCode.Conflict,
+                        mapOf("error" to "Already have a session for this table")
+                    )
+                }
+
+                val request = call.receive<JoinRequest>()
+                val result = gameService.joinTable(tableId, request.playerName)
+
+                if (result is ServiceResult.Ok) {
+                    val token = jwtService.createToken(tableId, result.value.playerId)
+                    call.response.cookies.append(
+                        Cookie(
+                            name = jwtService.cookieName(tableId),
+                            value = token,
+                            path = "/",
+                            httpOnly = true,
+                        )
+                    )
+                }
+
+                call.respond(result)
+            }
         }
 
         get<TableResource> { resource ->
@@ -92,34 +126,6 @@ fun Application.configureTableRoutes(
             val session = call.extractSession(jwtService, tableId)
 
             call.respond(gameService.getTableInfo(tableId, session?.playerId))
-        }
-
-        post<TablePlayersResource> { resource ->
-            val tableId = resource.tableId
-
-            if (call.extractSession(jwtService, tableId) != null) {
-                return@post call.respond(
-                    HttpStatusCode.Conflict,
-                    mapOf("error" to "Already have a session for this table")
-                )
-            }
-
-            val request = call.receive<JoinRequest>()
-            val result = gameService.joinTable(tableId, request.playerName)
-
-            if (result is ServiceResult.Ok) {
-                val token = jwtService.createToken(tableId, result.value.playerId)
-                call.response.cookies.append(
-                    Cookie(
-                        name = jwtService.cookieName(tableId),
-                        value = token,
-                        path = "/",
-                        httpOnly = true,
-                    )
-                )
-            }
-
-            call.respond(result)
         }
 
         post<TableActionResource> { resource ->

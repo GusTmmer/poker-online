@@ -1,26 +1,20 @@
 package com.gustmmer.poker.server.routes
 
-import com.gustmmer.poker.GameStatus
-import com.gustmmer.poker.PlayerStatus
-import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.persistence.PokerTablePersistence
+import com.gustmmer.poker.server.service.ServiceResult
+import com.gustmmer.poker.server.service.withTable
 import com.gustmmer.poker.server.session.JwtService
-import com.gustmmer.poker.server.timer.TurnTimerManager
-import com.gustmmer.poker.server.voting.VoteManager
-import com.gustmmer.poker.server.voting.toSummary
+import io.ktor.http.HttpStatusCode
 import com.gustmmer.poker.server.websocket.TableConnectionManager
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
-import java.time.Instant
 
 fun Application.configureWebSocketRoutes(
     jwtService: JwtService,
     connectionManager: TableConnectionManager,
     persistence: PokerTablePersistence,
-    voteManager: VoteManager,
-    timerManager: TurnTimerManager,
 ) {
     routing {
         webSocket("/ws/tables/{tableId}") {
@@ -43,43 +37,34 @@ fun Application.configureWebSocketRoutes(
                 return@webSocket
             }
 
-            val table = PokerTable.restore(tableId, persistence)
-            if (table == null) {
-                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Table not found"))
-                return@webSocket
+            // Bring the (re)connecting player ONLINE through a versioned save so a concurrent
+            // round mutation can't be silently lost. setPlayerOnline no-ops if already ONLINE.
+            val connect = withTable(tableId, persistence) { table ->
+                if (table.currentState.players.none { it.id == session.playerId }) {
+                    return@withTable ServiceResult.Failed(HttpStatusCode.NotFound, "Player not found in table")
+                }
+                table.setPlayerOnline(session.playerId)
+                ServiceResult.Ok(table)
             }
-
-            val player = table.currentState.players.find { it.id == session.playerId }
-            if (player == null) {
-                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Player not found in table"))
-                return@webSocket
-            }
-
-            if (player.status == PlayerStatus.OFFLINE || player.status == PlayerStatus.IDLE) {
-                player.setAsOnline()
-                persistence.saveState(table.currentState)
-            }
-
-            connectionManager.addConnection(tableId, session.playerId, this)
-            val activeVotes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
-            connectionManager.broadcastGameState(table.currentState, activeVotes)
-
-            // Recover timer if the server restarted while a round was in progress
-            if (table.currentState.gameStatus == GameStatus.RUNNING && timerManager.getRemainingMs(tableId) == null) {
-                val durationMs = table.currentState.config.turnTimerSeconds * 1000L
-                val startedAt = table.currentState.turnTimerStartedAt
-                if (startedAt != null) {
-                    val elapsed = Instant.now().toEpochMilli() - startedAt
-                    val remaining = (durationMs - elapsed).coerceAtLeast(0L)
-                    if (remaining <= 0L) {
-                        timerManager.resolveExpiredTurns(table, durationMs)
-                    } else {
-                        timerManager.startTimer(table, remaining)
-                    }
-                } else {
-                    timerManager.startTimer(table, durationMs)
+            val table = when (connect) {
+                is ServiceResult.Ok -> connect.value
+                is ServiceResult.Failed -> {
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, connect.error))
+                    return@webSocket
                 }
             }
+
+            // A reconnect on a new session displaces the old one; close it so its coroutine ends now
+            // instead of lingering until the ping timeout. Its finally-block is a no-op here because
+            // the player is already registered under the new session.
+            connectionManager.addConnection(tableId, session.playerId, this)?.let { displaced ->
+                runCatching { displaced.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Replaced by a new connection")) }
+            }
+            connectionManager.broadcastGameState(table.currentState)
+
+            // No timer recovery needed: the turn timer is a durable Cloud Task that fires regardless of
+            // restarts/scale-to-zero (and the dev in-memory scheduler shares the process, where the
+            // in-memory persistence loses state on restart anyway).
 
             try {
                 for (frame in incoming) {
@@ -88,16 +73,19 @@ fun Application.configureWebSocketRoutes(
                     // Keepalive pings are handled by the WebSocket plugin.
                 }
             } finally {
-                connectionManager.removeConnection(tableId, session.playerId)
+                connectionManager.removeConnection(tableId, session.playerId, this)
 
-                val currentTable = PokerTable.restore(tableId, persistence)
-                if (currentTable != null) {
-                    val disconnectedPlayer = currentTable.currentState.players.find { it.id == session.playerId }
-                    if (disconnectedPlayer != null && disconnectedPlayer.status == PlayerStatus.ONLINE) {
-                        disconnectedPlayer.setAsOffline()
-                        persistence.saveState(currentTable.currentState)
-                        val votes = voteManager.getOpenSessions(tableId).map { it.toSummary() }
-                        connectionManager.broadcastGameState(currentTable.currentState, votes)
+                // Only mark offline if the player has NOT already reconnected on a new session.
+                // Without this check, a reconnecting player's new session sets them ONLINE, but
+                // the old session's finally block would overwrite that with OFFLINE, causing
+                // startTimer to see OFFLINE and immediately auto-play their turn.
+                if (!connectionManager.isPlayerConnected(tableId, session.playerId)) {
+                    // setPlayerOffline only transitions an ONLINE player, so it never clobbers a
+                    // reconnect that already set the player back ONLINE on a fresh session. The change
+                    // (if any) fans out via the bus to any players still connected.
+                    withTable(tableId, persistence) { table ->
+                        table.setPlayerOffline(session.playerId)
+                        ServiceResult.Ok(Unit)
                     }
                 }
             }

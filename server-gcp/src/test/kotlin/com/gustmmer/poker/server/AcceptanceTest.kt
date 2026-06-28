@@ -399,8 +399,12 @@ class AcceptanceTest {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun ApplicationTestBuilder.threeClients(): Triple<PokerClient, PokerClient, PokerClient> {
-        val persistence = MemoryBasedPokerTablePersistence.json()
-        application { configureServer(persistence, testConfig) }
+        val bus = com.gustmmer.poker.server.bus.InMemoryTableUpdateBus()
+        val persistence = com.gustmmer.poker.server.persistence.NotifyingPersistence(
+            MemoryBasedPokerTablePersistence.json(), bus
+        )
+        val scheduler = com.gustmmer.poker.server.timer.InMemoryTaskScheduler()
+        application { configureServer(persistence, testConfig, bus, scheduler) }
         fun client() = PokerClient(createClient {
             install(ContentNegotiation) { json() }
             install(HttpCookies)

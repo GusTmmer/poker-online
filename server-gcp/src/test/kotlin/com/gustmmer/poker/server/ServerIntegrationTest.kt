@@ -12,6 +12,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.testing.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
@@ -25,11 +26,15 @@ class ServerIntegrationTest {
         firestoreProjectId = "test-project",
     )
 
-    private fun ApplicationTestBuilder.configureTestApp(): HttpClient {
-        val persistence = MemoryBasedPokerTablePersistence.json()
+    private fun ApplicationTestBuilder.configureTestApp(config: ServerConfig = testConfig): HttpClient {
+        val bus = com.gustmmer.poker.server.bus.InMemoryTableUpdateBus()
+        val persistence = com.gustmmer.poker.server.persistence.NotifyingPersistence(
+            MemoryBasedPokerTablePersistence.json(), bus
+        )
+        val scheduler = com.gustmmer.poker.server.timer.InMemoryTaskScheduler()
 
         application {
-            configureServer(persistence, testConfig)
+            configureServer(persistence, config, bus, scheduler)
         }
 
         return createClient {
@@ -238,6 +243,45 @@ class ServerIntegrationTest {
     }
 
     @Test
+    fun `a committed change fans out to another player's socket via the bus`() = testApplication {
+        val alice = configureTestApp()
+
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","startingChips":1000,"maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        val bob = createClient {
+            install(ContentNegotiation) { json() }
+            install(HttpCookies)
+            install(WebSockets)
+        }
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Bob"}""")
+        }
+
+        bob.webSocket("/ws/tables/$tableId") {
+            // First frame: the connect snapshot — no round yet.
+            val first = (withTimeout(5000) { incoming.receive() } as Frame.Text).readText()
+            assertEquals("WAITING", Json.parseToJsonElement(first).jsonObject["gameStatus"]!!.jsonPrimitive.content)
+
+            // Alice starts the round over REST. With the explicit broadcasts removed, the ONLY way this
+            // reaches Bob's socket is the bus fanning out the committed change.
+            assertEquals(HttpStatusCode.OK, alice.post("/api/tables/$tableId/start-round").status)
+
+            withTimeout(5000) {
+                while (true) {
+                    val obj = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
+                    if (obj["roundStage"]?.jsonPrimitive?.contentOrNull != null) break // round is live → fan-out worked
+                }
+            }
+        }
+    }
+
+    @Test
     fun `unauthenticated requests are rejected`() = testApplication {
         val client = configureTestApp()
 
@@ -265,6 +309,155 @@ class ServerIntegrationTest {
     fun `nonexistent table returns 404`() = testApplication {
         val client = configureTestApp()
         assertEquals(HttpStatusCode.NotFound, client.get("/api/tables/99999").status)
+    }
+
+    @Test
+    fun `an unattended turn times out and auto-plays via the scheduler`() = testApplication {
+        val alice = configureTestApp()
+
+        // 1s turn timer so the in-memory scheduler fires quickly.
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","startingChips":1000,"turnTimerSeconds":1,"maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Bob"}""")
+        }
+
+        assertEquals(HttpStatusCode.OK, alice.post("/api/tables/$tableId/start-round").status)
+
+        // Nobody acts. The scheduler should fire, idle the timed-out player and auto-play their turn.
+        withTimeout(6000) {
+            while (true) {
+                val players = Json.parseToJsonElement(alice.get("/api/tables/$tableId").bodyAsText())
+                    .jsonObject["players"]!!.jsonArray
+                if (players.any { it.jsonObject["status"]!!.jsonPrimitive.content == "IDLE" }) break
+                delay(150)
+            }
+        }
+    }
+
+    @Test
+    fun `a pending vote fans out to other players via the bus`() = testApplication {
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        val bob = createClient {
+            install(ContentNegotiation) { json() }
+            install(HttpCookies)
+            install(WebSockets)
+        }
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Bob"}""")
+        }
+
+        bob.webSocket("/ws/tables/$tableId") {
+            // Drain the connect snapshot first — it's sent after the server registers Bob's bus
+            // subscription, so receiving it guarantees the subsequent vote commit will reach him.
+            withTimeout(5000) { incoming.receive() }
+
+            // Alice opens a pause vote (2 participants → needs 2 → stays PENDING at her 1 yes). The vote
+            // lives in table state now, so the commit fans out to Bob's socket via the bus.
+            val resp = alice.post("/api/tables/$tableId/voting-sessions") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"resolution":"PAUSE_GAME"}""")
+            }
+            assertEquals(HttpStatusCode.OK, resp.status)
+
+            withTimeout(5000) {
+                while (true) {
+                    val obj = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
+                    val votes = obj["activeVotes"]?.jsonArray
+                    if (votes != null && votes.isNotEmpty() &&
+                        votes[0].jsonObject["resolutionType"]?.jsonPrimitive?.content == "PAUSE_GAME"
+                    ) break
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the vote-expire endpoint closes a still-open vote`() = testApplication {
+        val alice = configureTestApp()
+        val tableId = openTableWithTwoPlayers(alice)
+
+        val sessionId = Json.parseToJsonElement(
+            alice.post("/api/tables/$tableId/voting-sessions") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"resolution":"PAUSE_GAME"}""")
+            }.bodyAsText()
+        ).jsonObject["sessionId"]!!.jsonPrimitive.content
+
+        assertEquals(1, votingSessionsCount(alice, tableId))
+
+        val expire = alice.post("/internal/vote-expire/$tableId/$sessionId") {
+            header("X-Internal-Token", "dev-internal-token")
+        }
+        assertEquals(HttpStatusCode.OK, expire.status)
+        assertEquals(0, votingSessionsCount(alice, tableId))
+    }
+
+    @Test
+    fun `a pending vote auto-closes when its timeout fires via the scheduler`() = testApplication {
+        val alice = configureTestApp(testConfig.copy(voteTimeoutSeconds = 1))
+        val tableId = openTableWithTwoPlayers(alice)
+
+        alice.post("/api/tables/$tableId/voting-sessions") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"resolution":"PAUSE_GAME"}""")
+        }
+        assertEquals(1, votingSessionsCount(alice, tableId))
+
+        // The scheduler's vote timeout should fire and close it.
+        withTimeout(6000) {
+            while (votingSessionsCount(alice, tableId) != 0) delay(150)
+        }
+    }
+
+    private suspend fun ApplicationTestBuilder.openTableWithTwoPlayers(alice: HttpClient): Int {
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Bob"}""")
+        }
+        return tableId
+    }
+
+    private suspend fun votingSessionsCount(client: HttpClient, tableId: Int): Int =
+        Json.parseToJsonElement(client.get("/api/tables/$tableId/voting-sessions").bodyAsText()).jsonArray.size
+
+    @Test
+    fun `internal timer-expire endpoint rejects calls without the shared secret`() = testApplication {
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice"}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        assertEquals(HttpStatusCode.Unauthorized, alice.post("/internal/timer-expire/$tableId").status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            alice.post("/internal/timer-expire/$tableId") { header("X-Internal-Token", "wrong") }.status,
+        )
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
