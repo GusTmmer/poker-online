@@ -1,0 +1,36 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  /* Global type scale lever - every `rem` size in the app grows from this, rather than the
+     browser's 16px default. */
+  font-size: 19px;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  font-size: 1.05rem;
+  background:
+    radial-gradient(ellipse at center, #2a1014 0%, #160a0c 55%, #0a0506 100%);
+  color: #ede1c8;
+}
+
+button {
+  font-family: inherit;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Cinzel', Georgia, serif;
+  letter-spacing: 0.03em;
+  text-wrap: balance;
+}
