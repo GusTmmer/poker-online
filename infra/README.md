@@ -1,8 +1,13 @@
 # Infrastructure & deployment runbook
 
 Operational steps for deploying the poker server to GCP under the Path B / cost-first constraints
-(see `../docs/path-b-plan.md`). These are **manual `gcloud` steps** — there is no Terraform yet.
-Run them once per environment. Substitute `PROJECT_ID` and `REGION=us-central1` throughout.
+(see `../docs/path-b-plan.md`).
+
+> **Prefer Terraform.** The whole stack is now described declaratively in [`terraform/`](terraform/) —
+> `terraform apply` builds everything below in one shot, repeatably. Use that. The `gcloud` steps here
+> remain as a manual reference / fallback (e.g. if you can't grant billing-account admin via Terraform).
+
+These `gcloud` steps run once per environment. Substitute `PROJECT_ID` and `REGION=us-central1` throughout.
 
 ```bash
 export PROJECT_ID=poker-online-dev

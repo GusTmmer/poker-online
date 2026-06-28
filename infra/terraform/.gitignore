@@ -1,0 +1,8 @@
+# Terraform state can contain secret values (the generated JWT/internal tokens) — never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+build/
+crash.log
