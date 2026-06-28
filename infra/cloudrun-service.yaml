@@ -1,0 +1,62 @@
+# Cloud Run service manifest — the enforced shape of the deployment.
+#
+# The coordination layer is now stateless (Path B complete): fan-out via Firestore listeners, timers via
+# Cloud Tasks, votes in table state. So maxScale is purely a COST ceiling, not a correctness one — kept
+# low (3) deliberately to bound spend, not because the app requires it. minScale stays 0 forever
+# (scale-to-zero is a hard cost requirement — never set it >0).
+#
+# Apply with:
+#   gcloud run services replace infra/cloudrun-service.yaml --region=us-central1
+# (substitute PROJECT_ID / image / secret first — see infra/README.md)
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: poker-server
+  labels:
+    cloud.googleapis.com/location: us-central1
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"   # scale-to-zero — $0 when idle
+        autoscaling.knative.dev/maxScale: "3"    # cost ceiling (stateless now — safe to scale out)
+        run.googleapis.com/cpu-throttling: "true" # request-based billing (CPU only during requests)
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 250   # pack many WS connections onto one instance → fewer instances
+      timeoutSeconds: 3600        # max WS lifetime before Cloud Run drops the request (client reconnects)
+      containers:
+        - image: us-central1-docker.pkg.dev/PROJECT_ID/poker/poker-server:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi   # bump to 1Gi only if the JVM OOMs on cold start
+          env:
+            - name: GCP_PROJECT_ID
+              value: PROJECT_ID
+            - name: ALLOWED_ORIGIN
+              value: "*"   # same-origin (SPA served by this service) makes CORS moot; keep "*" or set the host
+            # Cloud Tasks turn-timer callbacks (Phase 2): the queue POSTs back to this service's URL,
+            # carrying INTERNAL_TOKEN as a header. SERVICE_URL is this service's own https URL — set it
+            # after the first deploy assigns the URL (or to a mapped custom domain).
+            - name: SERVICE_URL
+              value: https://REPLACE_WITH_SERVICE_URL
+            - name: CLOUD_TASKS_LOCATION
+              value: us-central1
+            - name: CLOUD_TASKS_QUEUE
+              value: poker-timers
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: latest
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: internal-token
+                  key: latest
+  traffic:
+    - percent: 100
+      latestRevision: true

@@ -1,0 +1,12 @@
+# Keep the Docker build context small and reproducible.
+.git
+.gradle
+.kotlin
+**/build
+**/node_modules
+frontend/dist
+.playwright-mcp
+.idea
+.vscode
+*.png
+docs
