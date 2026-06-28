@@ -38,11 +38,13 @@ class Pot(
     )
 
     fun chipsToMatchCurrentBet(player: Player): Int {
-        return (currentBet() - betsByPlayer.getValue(player)).also { assert(it >= 0) }
+        return (currentBet() - betsByPlayer.getValue(player)).also {
+            check(it >= 0) { "Player ${player.id} has bet more than the current bet" }
+        }
     }
 
     fun addPlayerChips(player: Player, chips: Int) {
-        assert(player.chips >= chips)
+        require(player.chips >= chips) { "Player ${player.id} cannot bet $chips with only ${player.chips} chips" }
 
         player.removeChips(chips)
 
@@ -62,16 +64,18 @@ class Pot(
     }
 
     fun resolveWinnerWithSingleActivePlayer() {
-        assert(activePlayerCount() == 1)
-
+        check(activePlayerCount() == 1) { "Expected exactly one active player, found ${activePlayerCount()}" }
         val winner = betsByPlayer.keys.first(Player::isActive)
-        val wonChips = chipsWonByEachWinner(setOf(winner))
-
-        winner.addChips(wonChips)
+        distributeToWinners(setOf(winner))
     }
 
-    fun chipsWonByEachWinner(winningPlayers: Set<Player>): Int {
-        return totalBets() / winningPlayers.size
+    fun distributeToWinners(winningPlayers: Set<Player>) {
+        val total = totalBets()
+        val perWinner = total / winningPlayers.size
+        val remainder = total % winningPlayers.size
+        winningPlayers.forEachIndexed { i, player ->
+            player.addChips(perWinner + if (i == 0) remainder else 0)
+        }
     }
 
     fun mergeBetsFromPot(pot: Pot) {
@@ -132,7 +136,7 @@ class Pot(
     }
 
     private fun giveChipsBackToPlayer(player: Player, chips: Int) {
-        assert(betsByPlayer.getValue(player) >= chips)
+        check(betsByPlayer.getValue(player) >= chips) { "Cannot refund $chips to player ${player.id}; bet is ${betsByPlayer.getValue(player)}" }
 
         player.addChips(chips)
 

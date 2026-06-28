@@ -35,7 +35,13 @@ class PlayerOrdering private constructor(
         }
 
         private fun forNewBettingRound(players: List<Player>, dealerPos: Int): PlayerOrdering {
-            return PlayerOrdering(players, dealerPos, smallBlindPos(dealerPos, players.size))
+            var pos = smallBlindPos(dealerPos, players.size)
+            var checked = 0
+            while (!players[pos].canBet() && checked < players.size) {
+                pos = (pos + 1) % players.size
+                checked++
+            }
+            return PlayerOrdering(players, dealerPos, pos)
         }
 
         /** First non-blind position */

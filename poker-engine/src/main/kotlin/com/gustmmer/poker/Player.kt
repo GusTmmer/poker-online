@@ -91,7 +91,7 @@ class Player(val id: Int, val name: String = "Player $id") {
     }
 
     fun removeChips(chips: Int) {
-        assert(this.chips - chips >= 0)
+        require(this.chips - chips >= 0) { "Cannot remove $chips chips from $name holding only ${this.chips}" }
         this.chips -= chips
     }
 

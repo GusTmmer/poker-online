@@ -1,6 +1,7 @@
 package com.gustmmer.poker.persistence
 
 import com.gustmmer.poker.PokerTableState
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -13,6 +14,7 @@ class FileBasedPokerTablePersistence(
 ) : PokerTablePersistence {
 
     companion object {
+        private val log = LoggerFactory.getLogger(FileBasedPokerTablePersistence::class.java)
         fun json() = FileBasedPokerTablePersistence(JsonSerializer())
     }
 
@@ -27,12 +29,16 @@ class FileBasedPokerTablePersistence(
         return try {
             serializer.deserialize(Files.readString(file.toPath()))
         } catch (e: Exception) {
-            println("Error loading state from $file: ${e.message}")
+            log.error("Error loading state from {}", file, e)
             null
         }
     }
 
-    override fun saveState(state: PokerTableState) {
+    /**
+     * Test-only seam: unconditionally writes [state] (no version check). Not part of
+     * [PokerTablePersistence] — production code cannot reach it.
+     */
+    fun seed(state: PokerTableState) {
         val file = getTableFile(state.id)
         Files.createDirectories(file.parentFile.toPath())
         Files.writeString(file.toPath(), serializer.serialize(state))

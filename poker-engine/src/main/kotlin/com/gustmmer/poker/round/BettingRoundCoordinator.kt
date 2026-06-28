@@ -5,7 +5,10 @@ import com.gustmmer.poker.Player
 import com.gustmmer.poker.onlyOneIsActive
 import com.gustmmer.poker.persistence.Wireable
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
 import kotlin.math.min
+
+private val log = LoggerFactory.getLogger(BettingRoundCoordinator::class.java)
 
 @Serializable
 data class WireableBettingRoundState(
@@ -94,7 +97,7 @@ class BettingRoundCoordinator(
     }
 
     private fun handlePlayerCommand(playerCommand: PlayerCommand) {
-        println("Processing ${playerCommand.type} from player ${playerCommand.playerId}")
+        log.debug("Processing {} from player {}", playerCommand.type, playerCommand.playerId)
 
         validateCommandIsFromExpectedPlayer(playerCommand)
 

@@ -13,7 +13,8 @@ import org.junit.jupiter.api.Test
  */
 class PokerTableIntegrationTest {
 
-    private val persistence: PokerTablePersistence = MemoryBasedPokerTablePersistence.json()
+    // Typed as the in-memory impl so tests can use its `seed` seam to stand up arbitrary state.
+    private val persistence: MemoryBasedPokerTablePersistence = MemoryBasedPokerTablePersistence.json()
 
     private val config = TableConfig(
         startingChips = 1000,
@@ -42,6 +43,7 @@ class PokerTableIntegrationTest {
 
         assertTrue(table.playerJoin(Player(1, "Bob")))
         assertTrue(table.playerJoin(Player(2, "Charlie")))
+        table.commit()
 
         assertEquals(3, table.currentState.players.size)
         table.currentState.players.forEach { assertEquals(1000, it.chips) }
@@ -55,6 +57,7 @@ class PokerTableIntegrationTest {
 
         val totalChipsBefore = table.currentState.players.sumOf { it.chips }
         table.newPokerRound()
+        table.commit()
         assertNotNull(table.currentState.roundState)
         assertEquals(PokerRoundStage.BET_BLINDS, table.currentState.roundState!!.pokerRoundStage)
 
@@ -69,16 +72,18 @@ class PokerTableIntegrationTest {
 
         val betweenRounds = restoreTable(tableId)
         betweenRounds.clearRoundState()
+        betweenRounds.commit()
 
         // Mark player 1 as idle before starting the round
         val idleTable = restoreTable(tableId)
         idleTable.currentState.players.find { it.id == 1 }!!.setAsIdle()
-        persistence.saveState(idleTable.currentState)
+        persistence.seed(idleTable.currentState)
 
         val round2Table = restoreTable(tableId)
         assertEquals(PlayerStatus.IDLE, round2Table.currentState.players.find { it.id == 1 }!!.status)
 
         round2Table.newPokerRound()
+        round2Table.commit()
 
         // Auto-play for idle/offline players
         drainAutoPlays(tableId)
@@ -113,10 +118,13 @@ class PokerTableIntegrationTest {
         assertFalse(pauseTable.currentState.gameStatus == GameStatus.PAUSED)
 
         pauseTable.pause(remainingTimerMs = 15000L)
+        pauseTable.commit()
         assertTrue(restoreTable(tableId).currentState.gameStatus == GameStatus.PAUSED)
         assertEquals(15000L, restoreTable(tableId).currentState.turnTimeRemainingMs)
 
-        val remaining = restoreTable(tableId).unpause()
+        val unpauseTable = restoreTable(tableId)
+        val remaining = unpauseTable.unpause()
+        unpauseTable.commit()
         assertEquals(15000L, remaining)
         assertFalse(restoreTable(tableId).currentState.gameStatus == GameStatus.PAUSED)
         assertNull(restoreTable(tableId).currentState.turnTimeRemainingMs)
@@ -128,9 +136,9 @@ class PokerTableIntegrationTest {
 
         val beforeKick = restoreTable(tableId)
         beforeKick.currentState.players.find { it.id == 2 }!!.setAsOffline()
-        persistence.saveState(beforeKick.currentState)
+        persistence.seed(beforeKick.currentState)
 
-        restoreTable(tableId).kickPlayer(2)
+        restoreTable(tableId).apply { kickPlayer(2); commit() }
         val afterKick = restoreTable(tableId)
         assertEquals(2, afterKick.currentState.players.size)
         assertNull(afterKick.currentState.players.find { it.id == 2 })
@@ -139,9 +147,10 @@ class PokerTableIntegrationTest {
 
         val joinTable = restoreTable(tableId)
         assertTrue(joinTable.playerJoin(Player(3, "Diana")))
+        joinTable.commit()
         assertEquals(3, restoreTable(tableId).currentState.players.size)
 
-        restoreTable(tableId).updateConfig(isOpen = false)
+        restoreTable(tableId).apply { updateConfig(isOpen = false); commit() }
         assertFalse(restoreTable(tableId).currentState.config.isOpen)
         assertFalse(restoreTable(tableId).playerJoin(Player(4, "Eve")),
             "Should not join a closed table")
@@ -149,8 +158,8 @@ class PokerTableIntegrationTest {
         // ── Phase 8: Restart game ───────────────────────────────────────────
 
         finishCurrentRound(tableId)
-        restoreTable(tableId).updateConfig(isOpen = true)
-        restoreTable(tableId).restartGame()
+        restoreTable(tableId).apply { updateConfig(isOpen = true); commit() }
+        restoreTable(tableId).apply { restartGame(); commit() }
 
         val restarted = restoreTable(tableId)
         restarted.currentState.players.forEach { player ->
@@ -164,6 +173,7 @@ class PokerTableIntegrationTest {
 
         val finalTable = restoreTable(tableId)
         finalTable.newPokerRound()
+        finalTable.commit()
         assertNotNull(finalTable.currentState.roundState)
 
         foldAllButOne(tableId)
@@ -312,6 +322,7 @@ class PokerTableIntegrationTest {
             val rs = t.currentState.roundState ?: break
             if (!rs.pokerRoundStage.isBettingRound()) break
             t.processPlayerCommand(Fold(rs.playerOrdering.bettingPlayer().id))
+            t.commit()
         }
     }
 
@@ -332,6 +343,7 @@ class PokerTableIntegrationTest {
             val t2 = restoreTable(tableId)
             if (t2.currentState.roundState != null) {
                 t2.clearRoundState()
+                t2.commit()
             }
         }
     }
@@ -342,6 +354,7 @@ class PokerTableIntegrationTest {
             val t = restoreTable(tableId)
             if (t.currentState.players.participating().size >= 2) {
                 t.newPokerRound()
+                t.commit()
                 foldAllButOne(tableId)
             }
         }
@@ -356,6 +369,7 @@ class PokerTableIntegrationTest {
             if (!rs.pokerRoundStage.isBettingRound()) break
             if (rs.playerOrdering.bettingPlayer().status == PlayerStatus.ONLINE) break
             t.autoPlayForCurrentPlayer() ?: break
+            t.commit()
         }
     }
 }

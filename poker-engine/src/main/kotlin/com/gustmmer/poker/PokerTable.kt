@@ -9,13 +9,26 @@ import kotlin.random.Random
 import kotlin.random.nextInt
 
 @Serializable
-data class Blinds(val big: Int, val small: Int)
+data class Blinds(val big: Int, val small: Int) {
+    companion object {
+        /** Initial blinds derived from the starting stack: big = 2%, small = 1%. */
+        fun initial(startingChips: Int) = Blinds(big = startingChips / 50, small = startingChips / 100)
+    }
+}
 
 class PokerTable(
     private var state: PokerTableState,
     private val persistence: PokerTablePersistence,
 ) {
     private var playerOrdering = state.playerOrdering
+
+    /**
+     * Set by every mutator, cleared by [commit]. Lets the transaction boundary skip a write when a
+     * block restored the table but changed nothing (e.g. a validation that bailed out, or a no-op
+     * status flip), avoiding pointless version bumps and the spurious conflicts they'd cause.
+     */
+    private var dirty = false
+    val isDirty: Boolean get() = dirty
 
     val dealer: Player
         get() = playerOrdering.dealer()
@@ -39,12 +52,13 @@ class PokerTable(
                 id = id,
                 players = players,
                 playerOrdering = PlayerOrdering.forNewTable(players),
-                blinds = Blinds(big = config.startingChips / 50, small = config.startingChips / 100),
+                blinds = Blinds.initial(config.startingChips),
                 roundState = null,
                 config = config,
             )
             val table = PokerTable(state, persistence)
-            table.saveState()
+            table.dirty = true
+            table.commit()
             return table
         }
 
@@ -91,7 +105,7 @@ class PokerTable(
             turnTimerStartedAt = null,
             initialPlayerCount = if (state.initialPlayerCount == 0) roundPlayers.size else state.initialPlayerCount,
         )
-        saveState()
+        dirty = true
     }
 
     fun processPlayerCommand(command: PlayerCommand) {
@@ -108,7 +122,7 @@ class PokerTable(
         if (newRoundState.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
             checkForEliminations()
         }
-        saveState()
+        dirty = true
     }
 
     /**
@@ -144,7 +158,7 @@ class PokerTable(
 
         player.addChips(state.config.startingChips)
         state.players.add(player)
-        saveState()
+        dirty = true
         return true
     }
 
@@ -153,7 +167,32 @@ class PokerTable(
     fun playerLeave(playerId: Int) {
         val player = state.players.find { it.id == playerId } ?: return
         player.setAsOffline()
-        saveState()
+        dirty = true
+    }
+
+    /**
+     * Brings an OFFLINE or IDLE [playerId] back ONLINE (staged). ONLINE and ELIMINATED players are
+     * left untouched. Returns true if the status actually changed. Compose with [unpause] inside one
+     * [withTable] block to activate-and-resume in a single commit.
+     */
+    fun setPlayerOnline(playerId: Int): Boolean {
+        val player = state.players.find { it.id == playerId } ?: return false
+        if (player.status != PlayerStatus.OFFLINE && player.status != PlayerStatus.IDLE) return false
+        player.setAsOnline()
+        dirty = true
+        return true
+    }
+
+    /**
+     * Marks [playerId] OFFLINE (staged). Only transitions an ONLINE player, so a reconnect that
+     * already set the player ONLINE on a new session is never clobbered. Returns true if it changed.
+     */
+    fun setPlayerOffline(playerId: Int): Boolean {
+        val player = state.players.find { it.id == playerId } ?: return false
+        if (player.status != PlayerStatus.ONLINE) return false
+        player.setAsOffline()
+        dirty = true
+        return true
     }
 
     fun kickPlayer(playerId: Int) {
@@ -167,7 +206,7 @@ class PokerTable(
         }
 
         state.players.remove(player)
-        saveState()
+        dirty = true
     }
 
     fun playerReady(playerId: Int): Boolean {
@@ -176,7 +215,7 @@ class PokerTable(
         if (!player.isParticipating()) return false
 
         state = state.copy(readyPlayers = state.readyPlayers + playerId)
-        saveState()
+        dirty = true
 
         return state.players.participating().all { it.id in state.readyPlayers }
     }
@@ -190,13 +229,8 @@ class PokerTable(
             player.setAsOnline()
         }
 
-        val initialBlinds = Blinds(
-            big = state.config.startingChips / 50,
-            small = state.config.startingChips / 100,
-        )
-
         state = state.copy(
-            blinds = initialBlinds,
+            blinds = Blinds.initial(state.config.startingChips),
             playerOrdering = PlayerOrdering.forNewTable(state.players),
             roundsSinceLastEscalation = 0,
             initialPlayerCount = 0,
@@ -204,12 +238,12 @@ class PokerTable(
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
         )
-        saveState()
+        dirty = true
     }
 
     fun timerStarted(epochMillis: Long) {
         state = state.copy(turnTimerStartedAt = epochMillis)
-        saveState()
+        dirty = true
     }
 
     fun pause(remainingTimerMs: Long?) {
@@ -218,19 +252,19 @@ class PokerTable(
             turnTimeRemainingMs = remainingTimerMs,
             turnTimerStartedAt = null,
         )
-        saveState()
+        dirty = true
     }
 
     fun unpause(): Long? {
         val remaining = state.turnTimeRemainingMs
         state = state.copy(gameStatus = GameStatus.RUNNING, turnTimeRemainingMs = null)
-        saveState()
+        dirty = true
         return remaining
     }
 
     fun updateConfig(isOpen: Boolean) {
         state = state.copy(config = state.config.copy(isOpen = isOpen))
-        saveState()
+        dirty = true
     }
 
     fun clearRoundState() {
@@ -245,7 +279,37 @@ class PokerTable(
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
         )
-        saveState()
+        dirty = true
+    }
+
+    /**
+     * Opens [vote], replacing any existing vote with the same resolution + target (re-opening supersedes).
+     * The engine only stores the tally; eligibility and consequences are the server's concern.
+     */
+    fun openVote(vote: ActiveVote) {
+        val others = state.activeVotes.filterNot {
+            it.resolutionType == vote.resolutionType && it.targetPlayerId == vote.targetPlayerId
+        }
+        state = state.copy(activeVotes = others + vote)
+        dirty = true
+    }
+
+    /** Records [playerId]'s yes/no on vote [sessionId] (idempotent; flips a prior opposite vote). No-op if absent. */
+    fun castVote(sessionId: String, playerId: Int, yes: Boolean) {
+        state = state.copy(activeVotes = state.activeVotes.map { v ->
+            when {
+                v.id != sessionId -> v
+                yes -> v.copy(yesVoters = v.yesVoters + playerId, noVoters = v.noVoters - playerId)
+                else -> v.copy(noVoters = v.noVoters + playerId, yesVoters = v.yesVoters - playerId)
+            }
+        })
+        dirty = true
+    }
+
+    /** Removes vote [sessionId] (on resolve, timeout, or cancellation). */
+    fun closeVote(sessionId: String) {
+        state = state.copy(activeVotes = state.activeVotes.filterNot { it.id == sessionId })
+        dirty = true
     }
 
     private fun checkForEliminations() {
@@ -254,10 +318,18 @@ class PokerTable(
             .forEach { it.setAsEliminated() }
     }
 
-    private fun saveState() {
+    /**
+     * The single write path. Persists staged mutations with an optimistic-concurrency check, then
+     * clears the dirty flag. A no-op if nothing was staged. Throws [ConcurrentModificationException]
+     * on a version mismatch so the surrounding [withTable] can restore and retry. Intended to be
+     * called only by that transaction boundary.
+     */
+    fun commit() {
+        if (!dirty) return
         state = state.copy(version = state.version + 1)
         if (!persistence.saveStateIfVersionMatches(state)) {
             throw ConcurrentModificationException("Concurrent modification of table ${state.id}")
         }
+        dirty = false
     }
 }

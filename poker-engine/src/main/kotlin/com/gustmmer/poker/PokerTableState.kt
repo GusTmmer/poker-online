@@ -25,9 +25,17 @@ data class WireablePokerTableState(
     val version: Long = 0,
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
+    val activeVotes: List<ActiveVote> = emptyList(),
 )
 
 fun PokerTableState.isGameOver(): Boolean = players.participating().size <= 1
+
+/** True when at least half of non-eliminated players are IDLE. */
+fun PokerTableState.majorityIdle(): Boolean {
+    val active = players.filter { it.status != PlayerStatus.ELIMINATED }
+    if (active.isEmpty()) return false
+    return active.count { it.status == PlayerStatus.IDLE } * 2 >= active.size
+}
 
 data class PokerTableState(
     val id: Int,
@@ -43,6 +51,7 @@ data class PokerTableState(
     val version: Long = 0,
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
+    val activeVotes: List<ActiveVote> = emptyList(),
 ) : Wireable<WireablePokerTableState> {
 
     companion object {
@@ -71,6 +80,7 @@ data class PokerTableState(
                 version = state.version,
                 roundsSinceLastEscalation = state.roundsSinceLastEscalation,
                 initialPlayerCount = state.initialPlayerCount,
+                activeVotes = state.activeVotes,
             )
         }
     }
@@ -89,5 +99,6 @@ data class PokerTableState(
         version = version,
         roundsSinceLastEscalation = roundsSinceLastEscalation,
         initialPlayerCount = initialPlayerCount,
+        activeVotes = activeVotes,
     )
 }

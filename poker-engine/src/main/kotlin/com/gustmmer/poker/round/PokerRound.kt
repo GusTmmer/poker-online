@@ -6,12 +6,17 @@ import com.gustmmer.poker.canMoreThanOneBet
 import com.gustmmer.poker.hand.TexasHoldEmHandEvaluator
 import com.gustmmer.poker.hand.rankings.PokerHand
 import com.gustmmer.poker.onlyOneIsActive
+import org.slf4j.LoggerFactory
 import kotlin.math.min
 
 
 class PokerRound(state: PokerRoundState) {
 
     private var state = state.copy()
+
+    private companion object {
+        private val log = LoggerFactory.getLogger(PokerRound::class.java)
+    }
 
     private val players
         get() = state.players
@@ -44,7 +49,7 @@ class PokerRound(state: PokerRoundState) {
 
         if (state.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
             showdown()
-            println("Final balance: $players")
+            log.debug("Final balance: {}", players)
         }
 
         return state
@@ -65,7 +70,7 @@ class PokerRound(state: PokerRoundState) {
         if (cardCount == 0) {
             return
         }
-        println("Revealed $cardCount more card(s)")
+        log.debug("Revealed {} more card(s)", cardCount)
         communityCards.addAll(deck.draw(cardCount))
     }
 
@@ -93,7 +98,7 @@ class PokerRound(state: PokerRoundState) {
         }
 
         pots.filter { pot -> pot.activePlayerCount() == 1 }.takeIf { it.isNotEmpty() }?.let { autoResolvedPots ->
-            println("Resolving pot preemptively: $autoResolvedPots")
+            log.debug("Resolving pot preemptively: {}", autoResolvedPots)
             autoResolvedPots.forEach(Pot::resolveWinnerWithSingleActivePlayer)
             pots.removeAll(autoResolvedPots)
         }
@@ -138,15 +143,15 @@ class PokerRound(state: PokerRoundState) {
             return
         }
 
-        println("Showdown")
-        println("Community: $communityCards")
+        log.debug("Showdown")
+        log.debug("Community: {}", communityCards)
 
         val highestPokerHands = players
             .active()
             .map { it to TexasHoldEmHandEvaluator.getMatchingPokerHand(communityCards, it.pocketCards) }
             .sortedByDescending { (_, hand) -> hand }
 
-        println("Poker Hands: $highestPokerHands")
+        log.debug("Poker Hands: {}", highestPokerHands)
 
         pots.forEach { resolvePot(it, highestPokerHands) }
     }
@@ -160,10 +165,8 @@ class PokerRound(state: PokerRoundState) {
             .map { (player, _) -> player }
             .toSet()
 
-        val chipsWonByEachPlayer = pot.chipsWonByEachWinner(winningPlayers)
+        pot.distributeToWinners(winningPlayers)
 
-        winningPlayers.forEach { it.addChips(chipsWonByEachPlayer) }
-
-        println("$winningPlayers won $chipsWonByEachPlayer with a ${winningHand.ranking}")
+        log.debug("{} won pot with a {}", winningPlayers, winningHand.ranking)
     }
 }

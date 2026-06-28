@@ -35,34 +35,34 @@ class PokerTableTest {
         )
         table.playerJoin(Player(1, "Bob"))
         table.playerJoin(Player(2, "Charlie"))
-
         table.newPokerRound()
+        table.commit()
 
         // Blinds round
-        restoreTable(tableId).processPlayerCommand(Call(0))
-        restoreTable(tableId).processPlayerCommand(Call(1))
-        restoreTable(tableId).processPlayerCommand(Raise(2, 400))
-        restoreTable(tableId).processPlayerCommand(Call(0))
-        restoreTable(tableId).processPlayerCommand(Call(1))
+        act(tableId, Call(0))
+        act(tableId, Call(1))
+        act(tableId, Raise(2, 400))
+        act(tableId, Call(0))
+        act(tableId, Call(1))
 
         // Flop round
-        restoreTable(tableId).processPlayerCommand(Call(1))
-        restoreTable(tableId).processPlayerCommand(Call(2))
-        restoreTable(tableId).processPlayerCommand(Raise(0, 200))
-        restoreTable(tableId).processPlayerCommand(Call(1))
-        restoreTable(tableId).processPlayerCommand(Call(2))
+        act(tableId, Call(1))
+        act(tableId, Call(2))
+        act(tableId, Raise(0, 200))
+        act(tableId, Call(1))
+        act(tableId, Call(2))
 
         // Turn round
-        restoreTable(tableId).processPlayerCommand(Call(1))
-        restoreTable(tableId).processPlayerCommand(Call(2))
-        restoreTable(tableId).processPlayerCommand(Call(0))
+        act(tableId, Call(1))
+        act(tableId, Call(2))
+        act(tableId, Call(0))
 
         // River round
-        restoreTable(tableId).processPlayerCommand(Call(1))
-        restoreTable(tableId).processPlayerCommand(Call(2))
-        restoreTable(tableId).processPlayerCommand(Raise(0, 200))
-        restoreTable(tableId).processPlayerCommand(Fold(1))
-        restoreTable(tableId).processPlayerCommand(Fold(2))
+        act(tableId, Call(1))
+        act(tableId, Call(2))
+        act(tableId, Raise(0, 200))
+        act(tableId, Fold(1))
+        act(tableId, Fold(2))
 
         with(persistence.loadState(tableId)!!) {
             assertEquals(3000, this.players.sumOf { it.chips })
@@ -185,5 +185,10 @@ class PokerTableTest {
 
     private fun restoreTable(tableId: Int): PokerTable {
         return PokerTable.restore(tableId, persistence)!!
+    }
+
+    /** Restore, apply one command, and commit — the persistence round-trip these tests exercise. */
+    private fun act(tableId: Int, command: com.gustmmer.poker.round.PlayerCommand) {
+        restoreTable(tableId).apply { processPlayerCommand(command); commit() }
     }
 }
