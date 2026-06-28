@@ -8,9 +8,14 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
+import java.security.MessageDigest
 
 @Serializable
 data class TimerExpireBody(val token: Long)
+
+/** Constant-time comparison so the shared secret can't be probed by response timing. */
+private fun secretMatches(provided: String?, expected: String): Boolean =
+    provided != null && MessageDigest.isEqual(provided.toByteArray(), expected.toByteArray())
 
 /**
  * Endpoints called by Cloud Tasks, not players. Guarded by a shared-secret header so only the task
@@ -27,7 +32,7 @@ fun Application.configureInternalRoutes(
 ) {
     routing {
         post("/internal/timer-expire/{tableId}") {
-            if (call.request.headers["X-Internal-Token"] != internalToken) {
+            if (!secretMatches(call.request.headers["X-Internal-Token"], internalToken)) {
                 return@post call.respond(HttpStatusCode.Unauthorized)
             }
             val tableId = call.parameters["tableId"]?.toIntOrNull()
@@ -38,7 +43,7 @@ fun Application.configureInternalRoutes(
         }
 
         post("/internal/vote-expire/{tableId}/{sessionId}") {
-            if (call.request.headers["X-Internal-Token"] != internalToken) {
+            if (!secretMatches(call.request.headers["X-Internal-Token"], internalToken)) {
                 return@post call.respond(HttpStatusCode.Unauthorized)
             }
             val tableId = call.parameters["tableId"]?.toIntOrNull()

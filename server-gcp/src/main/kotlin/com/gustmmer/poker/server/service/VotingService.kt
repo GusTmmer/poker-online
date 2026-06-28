@@ -6,7 +6,6 @@ import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PokerTableState
 import com.gustmmer.poker.isGameOver
-import com.gustmmer.poker.participating
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.routes.VoteSessionResponse
 import com.gustmmer.poker.server.routes.toResponse
@@ -51,14 +50,10 @@ class VotingService(
         resolution: VoteResolution,
         initiatorId: Int,
     ): ServiceResult<VoteSessionResponse> {
-        var response: VoteSessionResponse? = null
-        var effect: ResolutionEffect? = null
-        var pendingSessionId: String? = null
-
         val result = withTable(tableId, persistence) { table ->
             validate(table.currentState, resolution)?.let { return@withTable it }
 
-            val eligible = eligibleVoters(table.currentState, resolution)
+            val eligible = eligibleVoters(table.currentState, resolution, initiatorId)
             val vote = ActiveVote(
                 id = UUID.randomUUID().toString(),
                 resolutionType = resolution.typeName,
@@ -70,21 +65,19 @@ class VotingService(
             )
             table.openVote(vote)
 
-            if (vote.passed) {
-                effect = applyResolution(table, resolution)
+            val commit = if (vote.passed) {
+                val effect = applyResolution(table, resolution)
                 table.closeVote(vote.id)
-                response = vote.toResponse(VoteOutcome.PASSED)
+                VoteCommit(vote.toResponse(VoteOutcome.PASSED), effect = effect)
             } else {
-                pendingSessionId = vote.id
-                response = vote.toResponse(VoteOutcome.PENDING)
+                VoteCommit(vote.toResponse(VoteOutcome.PENDING), scheduleTimeoutFor = vote.id)
             }
-            ServiceResult.Ok(Unit)
+            ServiceResult.Ok(commit)
         }
-        if (result is ServiceResult.Failed) return result
-
-        effect?.let { runPostCommit(tableId, it) }
-        pendingSessionId?.let { scheduler.scheduleVoteTimeout(tableId, it, voteTimeoutSeconds * 1000) }
-        return ServiceResult.Ok(response!!)
+        return when (result) {
+            is ServiceResult.Failed -> result
+            is ServiceResult.Ok -> ServiceResult.Ok(applyCommit(tableId, result.value))
+        }
     }
 
     suspend fun castVote(
@@ -93,41 +86,47 @@ class VotingService(
         playerId: Int,
         yes: Boolean,
     ): ServiceResult<VoteSessionResponse>? {
-        var response: VoteSessionResponse? = null
-        var effect: ResolutionEffect? = null
-        var resolved = false
-        var notFound = false
-
-        val result = withTable(tableId, persistence) { table ->
+        val result: ServiceResult<VoteCommit?> = withTable(tableId, persistence) { table ->
             val vote = table.currentState.activeVotes.find { it.id == sessionId }
             if (vote == null || playerId !in vote.eligibleVoters) {
-                notFound = true
-                return@withTable ServiceResult.Ok(Unit) // nothing staged → no write
+                return@withTable ServiceResult.Ok<VoteCommit?>(null) // nothing staged → no write; signals not-found
             }
             table.castVote(sessionId, playerId, yes)
             val updated = table.currentState.activeVotes.first { it.id == sessionId }
-            when {
+            val commit = when {
                 updated.passed -> {
-                    effect = applyResolution(table, VoteResolution.from(updated))
+                    val effect = applyResolution(table, VoteResolution.from(updated))
                     table.closeVote(sessionId)
-                    resolved = true
-                    response = updated.toResponse(VoteOutcome.PASSED)
+                    VoteCommit(updated.toResponse(VoteOutcome.PASSED), effect = effect, cancelTimeoutFor = sessionId)
                 }
                 updated.failed -> {
                     table.closeVote(sessionId)
-                    resolved = true
-                    response = updated.toResponse(VoteOutcome.FAILED)
+                    VoteCommit(updated.toResponse(VoteOutcome.FAILED), cancelTimeoutFor = sessionId)
                 }
-                else -> response = updated.toResponse(VoteOutcome.PENDING)
+                else -> VoteCommit(updated.toResponse(VoteOutcome.PENDING))
             }
-            ServiceResult.Ok(Unit)
+            ServiceResult.Ok<VoteCommit?>(commit)
         }
-        if (notFound) return null
-        if (result is ServiceResult.Failed) return result
+        return when (result) {
+            is ServiceResult.Failed -> result
+            is ServiceResult.Ok -> result.value?.let { ServiceResult.Ok(applyCommit(tableId, it)) } // null → not found
+        }
+    }
 
-        if (resolved) scheduler.cancelVote(sessionId)
-        effect?.let { runPostCommit(tableId, it) }
-        return ServiceResult.Ok(response!!)
+    /** What a committed vote operation produced; consumed by [applyCommit] after the write. */
+    private data class VoteCommit(
+        val response: VoteSessionResponse,
+        val effect: ResolutionEffect? = null,
+        val scheduleTimeoutFor: String? = null, // a new pending vote → arm its timeout
+        val cancelTimeoutFor: String? = null,   // a vote resolved → cancel its timeout
+    )
+
+    /** Runs the post-commit side effects a vote operation asked for, then returns its response. */
+    private suspend fun applyCommit(tableId: Int, commit: VoteCommit): VoteSessionResponse {
+        commit.cancelTimeoutFor?.let { scheduler.cancelVote(it) }
+        commit.scheduleTimeoutFor?.let { scheduler.scheduleVoteTimeout(tableId, it, voteTimeoutSeconds * 1000) }
+        commit.effect?.let { runPostCommit(tableId, it) }
+        return commit.response
     }
 
     /**
@@ -170,12 +169,17 @@ class VotingService(
         }
     }
 
-    private fun eligibleVoters(s: PokerTableState, resolution: VoteResolution): Set<Int> {
-        val participating = s.players.participating().map { it.id }
-        return when (resolution) {
-            is VoteResolution.KickPlayer -> participating.filterNot { it == resolution.targetPlayerId }.toSet()
-            else -> participating.toSet()
-        }
+    /**
+     * Who gets a vote: players who are actually present (status ONLINE), read from persisted state so
+     * the set is identical on every instance. The initiator is acting right now, so count them in even
+     * if their status hasn't caught up. Offline/idle players don't inflate the required-votes denominator
+     * (otherwise a vote among a few present players could be mathematically impossible to pass).
+     */
+    private fun eligibleVoters(s: PokerTableState, resolution: VoteResolution, initiatorId: Int): Set<Int> {
+        val online = s.players.filter { it.status == PlayerStatus.ONLINE }.map { it.id }.toMutableSet()
+        online.add(initiatorId)
+        if (resolution is VoteResolution.KickPlayer) online.remove(resolution.targetPlayerId)
+        return online
     }
 
     private sealed class ResolutionEffect {

@@ -388,6 +388,51 @@ class ServerIntegrationTest {
     }
 
     @Test
+    fun `vote eligibility counts only online players`() = testApplication {
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":6}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        // Bob + Carol join and stay (ONLINE); Dave joins, connects a socket, then drops (→ OFFLINE).
+        for (name in listOf("Bob", "Carol")) {
+            createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+                .post("/api/tables/$tableId/players") {
+                    contentType(ContentType.Application.Json); setBody("""{"playerName":"$name"}""")
+                }
+        }
+        val dave = createClient {
+            install(ContentNegotiation) { json() }; install(HttpCookies); install(WebSockets)
+        }
+        dave.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Dave"}""")
+        }
+        dave.webSocket("/ws/tables/$tableId") { /* connect then immediately close → server marks OFFLINE */ }
+
+        // Wait until Dave is actually OFFLINE (the disconnect commit is async).
+        withTimeout(5000) {
+            while (true) {
+                val players = Json.parseToJsonElement(alice.get("/api/tables/$tableId").bodyAsText())
+                    .jsonObject["players"]!!.jsonArray
+                val dave3 = players.first { it.jsonObject["id"]!!.jsonPrimitive.int == 3 }
+                if (dave3.jsonObject["status"]!!.jsonPrimitive.content == "OFFLINE") break
+                delay(100)
+            }
+        }
+
+        // 3 online (Alice, Bob, Carol) → requiredVotes = 2, not 3 (Dave doesn't count).
+        val required = Json.parseToJsonElement(
+            alice.post("/api/tables/$tableId/voting-sessions") {
+                contentType(ContentType.Application.Json); setBody("""{"resolution":"PAUSE_GAME"}""")
+            }.bodyAsText()
+        ).jsonObject["requiredVotes"]!!.jsonPrimitive.int
+        assertEquals(2, required)
+    }
+
+    @Test
     fun `the vote-expire endpoint closes a still-open vote`() = testApplication {
         val alice = configureTestApp()
         val tableId = openTableWithTwoPlayers(alice)

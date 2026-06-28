@@ -23,19 +23,32 @@ data class ServerConfig(
      * Cloud Tasks sets it as a header on the task; the route rejects anything else. Must be a strong
      * secret in production (Secret Manager).
      */
-    val internalToken: String = "dev-internal-token",
+    val internalToken: String = DEFAULT_INTERNAL_TOKEN,
 ) {
+    /**
+     * Refuse to run with the insecure dev defaults. Called from the production entry point only —
+     * otherwise a forgotten secret would leave the JWT signing key and the internal-endpoint guard set
+     * to publicly-known values (anyone could forge sessions or trigger timer/vote expiry).
+     */
+    fun assertSecretsAreSet() {
+        check(jwtSecret != DEFAULT_JWT_SECRET) { "JWT_SECRET is the insecure default — set it (Secret Manager)." }
+        check(internalToken != DEFAULT_INTERNAL_TOKEN) { "INTERNAL_TOKEN is the insecure default — set it (Secret Manager)." }
+    }
+
     companion object {
+        const val DEFAULT_JWT_SECRET = "dev-secret-change-in-production"
+        const val DEFAULT_INTERNAL_TOKEN = "dev-internal-token"
+
         fun fromEnvironment() = ServerConfig(
             port = System.getenv("PORT")?.toIntOrNull() ?: 8080,
-            jwtSecret = System.getenv("JWT_SECRET") ?: "dev-secret-change-in-production",
+            jwtSecret = System.getenv("JWT_SECRET") ?: DEFAULT_JWT_SECRET,
             firestoreProjectId = System.getenv("GCP_PROJECT_ID") ?: "poker-online-dev",
             allowedOrigin = System.getenv("ALLOWED_ORIGIN") ?: "*",
             voteTimeoutSeconds = System.getenv("VOTE_TIMEOUT_SECONDS")?.toLongOrNull() ?: 60,
             rateLimitMutations = System.getenv("RATE_LIMIT_MUTATIONS")?.toIntOrNull() ?: 30,
             rateLimitRefillSeconds = System.getenv("RATE_LIMIT_REFILL_SECONDS")?.toLongOrNull() ?: 60,
             staticDir = System.getenv("STATIC_DIR")?.takeIf { it.isNotBlank() },
-            internalToken = System.getenv("INTERNAL_TOKEN") ?: "dev-internal-token",
+            internalToken = System.getenv("INTERNAL_TOKEN") ?: DEFAULT_INTERNAL_TOKEN,
         )
     }
 }

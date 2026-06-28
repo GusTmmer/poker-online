@@ -40,6 +40,7 @@ val MutationRateLimit = RateLimitName("mutations")
 
 fun main() {
     val config = ServerConfig.fromEnvironment()
+    config.assertSecretsAreSet()
     // One Firestore client shared by the persistence (reads/writes) and the update bus (snapshot
     // listeners) so they talk to the same database.
     val firestore = FirestoreOptions.newBuilder().setProjectId(config.firestoreProjectId).build().service
