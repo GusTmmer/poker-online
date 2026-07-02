@@ -5,6 +5,7 @@ import type { ActionType, GameStateUpdate } from '../../api/types'
 import { selectControls } from '../../game/selectors'
 import { readyUp, sendAction, startRound, setPlayerOnline, restartGame } from '../../api/client'
 import { VotingMenu } from './VotingMenu'
+import { RAISE_STEP, snapRaiseValue } from './snapRaiseValue'
 import { TurnTimer } from '../TurnTimer/TurnTimer'
 import { gradient, palette } from '../../theme'
 
@@ -243,7 +244,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
   const handleActivate = () => withBusy(() => setPlayerOnline(tableId))
 
   function handleSliderChange(raw: number) {
-    setRaiseValue(raw > 0 && raw < minRaise ? minRaise : raw)
+    setRaiseValue(snapRaiseValue(raw, minRaise, maxRaiseOnTop))
   }
 
   const shellProps = { gameState, myPlayerId, tableId }
@@ -320,7 +321,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
             fillPercent={fillPercent}
             min={0}
             max={maxRaiseOnTop}
-            step={10}
+            step={RAISE_STEP}
             value={raiseValue}
             disabled={!isMyTurn || busy}
             onChange={(e) => handleSliderChange(Number(e.target.value))}
