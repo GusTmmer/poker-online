@@ -3,7 +3,7 @@ import type { GameStateUpdate, PlayerView } from '../../api/types'
 import { hex } from '../../theme'
 import { SEAT_STADIUM, CARD_STADIUM, slotPosition } from './layout'
 import { buildSeat, updateSeat } from './drawSeat'
-import { makeCardBackPair, makeCardFacePair, CARD_H, PAIR_W } from './drawCard'
+import { makeCardBackPair, makeCardFacePair, makeMiniCardBackPair, CARD_H, PAIR_W } from './drawCard'
 import { MINI_SCALE, MY_CARD_SCALE, MY_CARD_X } from './constants'
 import { tween } from './tween'
 import type { SceneState } from './sceneTypes'
@@ -29,7 +29,9 @@ function renderEmptySeats(scene: SceneState, seatCount: number, mySlot: number, 
     if (occupiedSlots.has(slot)) continue
     const pos = slotPosition(slot, mySlot, seatCount, SEAT_STADIUM)
     const g = new Graphics()
-    g.circle(0, 0, 20).stroke({ color: hex.gold, alpha: 0.22, width: 1.5 })
+    // Vacant seat: a faint double ring, like an unclaimed medallion
+    g.circle(0, 0, 19).stroke({ color: hex.gold, alpha: 0.22, width: 1.5 })
+    g.circle(0, 0, 15.5).stroke({ color: hex.gold, alpha: 0.09, width: 1 })
     g.position.set(pos.x, pos.y)
     scene.emptySeatsLayer.addChild(g)
   }
@@ -65,7 +67,7 @@ export function updateSeats(
       seatObj.root.position.set(seatPosition.x, seatPosition.y)
       scene.seatsLayer.addChild(seatObj.root)
 
-      const miniCards = makeCardBackPair()
+      const miniCards = makeMiniCardBackPair()
       miniCards.pivot.set(PAIR_W / 2, CARD_H / 2)
       miniCards.scale.set(MINI_SCALE)
       const cardPos = slotPosition(slot, mySlot, seatCount, CARD_STADIUM)

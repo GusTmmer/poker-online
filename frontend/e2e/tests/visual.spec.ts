@@ -56,9 +56,16 @@ async function driveBotsUntil(
 // First run:  npm run test:e2e:update   (generates baselines)
 // Subsequent: npm run test:e2e          (compares against baselines)
 // Baselines stored in e2e/snapshots/ and committed to git.
-// maxDiffPixelRatio=0.02 tolerates minor WebGL anti-aliasing variation.
+//
+// Tolerances are deliberately tight so that real visual changes fail:
+//  - threshold (per-pixel YIQ distance) 0.1 instead of the 0.2 default, so
+//    broad low-contrast changes (e.g. a felt recolor) register as diff pixels.
+//  - maxDiffPixelRatio 0.005 (~4.6k px of 1280x720), enough headroom for
+//    SwiftShader anti-aliasing jitter but far below any redesign-level change.
+// NOTE: Playwright only rewrites baselines it considers "changed", so after an
+// intentional redesign run `playwright test --update-snapshots=all`.
 
-const SNAP_OPTS = { maxDiffPixelRatio: 0.02 } as const
+const SNAP_OPTS = { threshold: 0.1, maxDiffPixelRatio: 0.005 } as const
 
 test.describe('visual: lobby', () => {
   test('waiting room — 3 players, no round', async ({ page }) => {

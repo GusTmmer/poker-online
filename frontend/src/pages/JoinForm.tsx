@@ -8,6 +8,7 @@ import {
   FormSubmitButton,
   FormErrorText,
 } from '../components/ui/FormCard'
+import { FormOrnament } from '../components/ui/FormOrnament'
 
 export function JoinForm() {
   const { join, error, tableInfo } = useSession()
@@ -31,6 +32,7 @@ export function JoinForm() {
     <FormPage>
       <FormCard onSubmit={handleSubmit}>
         <FormTitle>Join the table</FormTitle>
+        <FormOrnament />
         <FormInput
           value={playerName}
           onChange={(e) => setPlayerName(e.target.value)}

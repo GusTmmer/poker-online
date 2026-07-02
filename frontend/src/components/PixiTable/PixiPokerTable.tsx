@@ -1,17 +1,16 @@
 import { useEffect, useRef } from 'react'
-import { Application, Container, Graphics, Ticker } from 'pixi.js'
+import { Application, Container, Ticker } from 'pixi.js'
 import type { GameStateUpdate } from '../../api/types'
 import type { GameEvent } from '../../game/events'
 import type { FrameBus } from '../../game/frameBus'
-import { hex } from '../../theme'
 import {
   LW, LH,
-  FELT_W, FELT_H,
   CARD_STADIUM,
   slotPosition,
 } from './layout'
+import { drawTable } from './drawTable'
 import {
-  makeCardBack, makeCardFace, makeDeck,
+  makeCardBack, makeCardFace, makeDeck, makeMiniCardBack,
   CARD_W, CARD_H,
 } from './drawCard'
 import {
@@ -28,8 +27,9 @@ import { tick } from './tick'
 
 // Module map: scene types → ./sceneTypes · constants → ./constants · pot pyramid →
 // ./pot · chip sprites → ./chips · tween engine → ./tween · seat rendering →
-// ./seats · per-frame loop → ./tick. This file owns Pixi setup, the felt, the
-// community/deal animation setup, and the apply-snapshot / handle-event dispatch.
+// ./seats · per-frame loop → ./tick · table rendering → ./drawTable. This file
+// owns Pixi setup, the community/deal animation setup, and the apply-snapshot /
+// handle-event dispatch.
 
 // ─── component ────────────────────────────────────────────────────────────────
 interface Props { bus: FrameBus; myPlayerId: number; maxPlayers: number }
@@ -60,14 +60,28 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
     const app = new Application()
     let destroyed = false
 
-    app.init({
-      width: LW,
-      height: LH,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-      backgroundAlpha: 0,
-      antialias: true,
-    }).then(() => {
+    // Canvas text (names, pot plaque) is rasterized once at creation, so the
+    // display font must be resolved before the first frame renders. Race a
+    // short timeout so a failed webfont load degrades to Georgia, not a hang.
+    const fontsReady = Promise.race([
+      Promise.all([
+        document.fonts.load('600 14px Cinzel'),
+        document.fonts.load('700 14px Cinzel'),
+      ]).catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 1200)),
+    ])
+
+    Promise.all([
+      app.init({
+        width: LW,
+        height: LH,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        backgroundAlpha: 0,
+        antialias: true,
+      }),
+      fontsReady,
+    ]).then(() => {
       if (destroyed) { app.destroy(); return }
 
       const canvas = app.canvas as HTMLCanvasElement
@@ -81,7 +95,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
       root.position.set(LW / 2, LH / 2)
       app.stage.addChild(root)
 
-      root.addChild(drawFelt())
+      root.addChild(drawTable())
 
       const emptySeatsLayer = new Container()
       const seatsLayer      = new Container()
@@ -174,19 +188,6 @@ function doResize(
   canvas.style.top    = '0'
   canvas.style.width  = `${w}px`
   canvas.style.height = `${h}px`
-}
-
-// ─── felt ─────────────────────────────────────────────────────────────────────
-function drawFelt(): Graphics {
-  const g = new Graphics()
-  const W = FELT_W, H = FELT_H, R = H / 2, RAIL = 20
-
-  g.roundRect(-W/2-RAIL, -H/2-RAIL, W+RAIL*2, H+RAIL*2, R+RAIL).fill({ color: 0x5b3a22 })
-  // Felt with radial gradient approximated via two layers
-  g.roundRect(-W/2, -H/2, W, H, R).fill({ color: 0x0c2f1d })
-  g.roundRect(-W/2+8, -H/2+8, W-16, H-16, R-8).fill({ color: 0x1f6b45 })
-  g.roundRect(-W/2, -H/2, W, H, R).stroke({ color: 0x000000, alpha: 0.35, width: 10 })
-  return g
 }
 
 // ─── community cards ──────────────────────────────────────────────────────────
@@ -301,7 +302,7 @@ function startDeal(scene: SceneState) {
       const toX  = cp.x + sign * HALF_SPACING * Math.cos(rot)
       const toY  = cp.y + sign * HALF_SPACING * Math.sin(rot)
 
-      const sprite = makeCardBack()
+      const sprite = makeMiniCardBack()
       sprite.pivot.set(CARD_W / 2, CARD_H / 2)
       sprite.scale.set(MINI_SCALE)
       sprite.rotation = rot

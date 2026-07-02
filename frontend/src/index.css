@@ -18,8 +18,12 @@ body,
 body {
   font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
   font-size: 1.05rem;
+  /* The card room: a warm pool of light overhead, falling off into dark
+     mahogany-tinted shadow at the edges. Layered radials, no flat color. */
   background:
-    radial-gradient(ellipse at center, #2a1014 0%, #160a0c 55%, #0a0506 100%);
+    radial-gradient(ellipse 120% 75% at 50% 28%, rgba(216, 182, 90, 0.07) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 40%, #2a1014 0%, #1a0a0d 50%, #0a0506 100%);
+  background-attachment: fixed;
   color: #ede1c8;
 }
 
@@ -33,4 +37,13 @@ h3 {
   font-family: 'Cinzel', Georgia, serif;
   letter-spacing: 0.03em;
   text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

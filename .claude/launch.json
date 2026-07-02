@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "PORT=18080 ./gradlew :server-gcp:runLocal --console=plain"],
+      "port": 18080
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "BACKEND_PORT=18080 npm run dev --prefix frontend"],
+      "port": 5173
+    }
+  ]
+}

@@ -1,9 +1,10 @@
-import { Graphics, Text, TextStyle } from 'pixi.js'
-import { palette } from '../../theme'
+import { Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { hex } from '../../theme'
 import type { SceneState } from './sceneTypes'
 
 // ─── pot chip pyramid ─────────────────────────────────────────────────────────
-const STACK_COLORS = [0x7a1f2b, 0x1c1c1c, 0x1f5c3a, 0x1a3a6b, 0xc9a227]
+// Clay chip colors: oxblood, ink, emerald, navy, gold — the classic denominations.
+const STACK_COLORS = [0x6b2230, 0x26221f, 0x1f5c3a, 0x24466b, 0xc9a227]
 const MAX_CHIPS_TOTAL = 16
 
 const CW = 22  // chip ellipse width (CHIP_W)
@@ -79,7 +80,24 @@ export function randomPotVariant() {
   return Math.floor(Math.random() * POT_VARIANTS.length)
 }
 
-const S_POT = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 14, fontWeight: 'bold', fill: palette.gold })
+const S_POT_WORD   = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 11, fontWeight: '600', fill: hex.gold, letterSpacing: 2 })
+const S_POT_AMOUNT = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 14, fontWeight: 'bold', fill: hex.cream })
+
+/** "POT 1,250" — engraved word in gold, amount in cream, centered as one unit. */
+function makePotLabel(potTotal: number): Container {
+  const c = new Container()
+  const word   = new Text({ text: 'POT', style: S_POT_WORD })
+  const amount = new Text({ text: potTotal.toLocaleString('en-US'), style: S_POT_AMOUNT })
+  const GAP = 7
+  const total = word.width + GAP + amount.width
+  word.anchor.set(0, 0.5)
+  amount.anchor.set(0, 0.5)
+  word.position.set(-total / 2, 1)
+  amount.position.set(-total / 2 + word.width + GAP, 0)
+  word.alpha = 0.85
+  c.addChild(word, amount)
+  return c
+}
 
 export function updatePot(scene: SceneState, potTotal: number, stage: string | null) {
   if (potTotal === scene.lastPotTotal && stage === scene.lastRoundStage) return
@@ -112,6 +130,10 @@ export function updatePot(scene: SceneState, potTotal: number, stage: string | n
         g.ellipse(cx, y + rh * 0.65, rw, rh * 0.55).fill({ color: 0x000000, alpha: 0.3 })
         // Main chip face
         g.ellipse(cx, y, rw, rh).fill({ color: col })
+        // Ivory edge spots on the visible band — reads as a real clay chip
+        for (const tx of [-rw * 0.55, 0, rw * 0.55]) {
+          g.rect(cx + tx - 1, y + rh * 0.25, 2, rh * 0.55).fill({ color: 0xf5efdc, alpha: 0.5 })
+        }
         // Top rim highlight — rounded edge catching light
         g.ellipse(cx, y - rh * 0.42, rw * 0.78, rh * 0.38).fill({ color: 0xffffff, alpha: 0.22 })
         // Edge stroke
@@ -121,8 +143,7 @@ export function updatePot(scene: SceneState, potTotal: number, stage: string | n
     potContainer.addChild(g)
   }
 
-  const label = new Text({ text: `Pot: ${potTotal}`, style: S_POT })
-  label.anchor.set(0.5, 0)
-  label.y = 14
+  const label = makePotLabel(potTotal)
+  label.y = 20
   potContainer.addChild(label)
 }

@@ -1,6 +1,7 @@
 import { type APIRequestContext, request } from '@playwright/test'
 
-const BACKEND = 'http://localhost:8080'
+// Backend port override, matching the Vite proxy's BACKEND_PORT in vite.config.ts.
+const BACKEND = `http://localhost:${process.env.BACKEND_PORT ?? '8080'}`
 
 export interface TableHandle {
   tableId: number

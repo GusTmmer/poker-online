@@ -14,8 +14,12 @@ const Bar = styled.div`
   left: 0;
   right: 0;
   background: ${gradient.panel};
-  border-top: 2px solid ${palette.bronze};
-  box-shadow: 0 -0.4rem 1.2rem rgba(0, 0, 0, 0.5);
+  /* Double hairline: bright gold line over a dark seam, like an inlaid edge */
+  border-top: 1px solid rgba(216, 182, 90, 0.55);
+  box-shadow:
+    0 -2px 0 rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(245, 217, 138, 0.12),
+    0 -0.4rem 1.4rem rgba(0, 0, 0, 0.55);
   padding: 0.9rem 1rem;
   display: flex;
   align-items: center;
@@ -43,9 +47,34 @@ const Button = styled.button<{ variant?: 'danger' | 'primary'; fixedWidth?: bool
         ? gradient.gold
         : gradient.green};
   color: ${(p) => (p.variant === 'primary' ? palette.ink : palette.cream)};
+  text-shadow: ${(p) => (p.variant === 'primary' ? 'none' : '0 1px 2px rgba(0, 0, 0, 0.5)')};
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
     0 0.2rem 0.4rem rgba(0, 0, 0, 0.5);
+  transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.12);
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+      0 0.35rem 0.8rem rgba(0, 0, 0, 0.55);
+  }
+
+  &:active:not(:disabled) {
+    filter: brightness(0.95);
+    transform: translateY(0);
+    box-shadow:
+      inset 0 2px 3px rgba(0, 0, 0, 0.35),
+      0 0.1rem 0.2rem rgba(0, 0, 0, 0.5);
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${palette.goldBright};
+    outline-offset: 2px;
+  }
 
   &:disabled {
     opacity: 0.4;

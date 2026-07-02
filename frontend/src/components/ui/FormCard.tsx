@@ -14,14 +14,19 @@ export const FormCard = styled.form`
   gap: 1.1rem;
   padding: 2.5rem;
   width: 380px;
+  max-width: calc(100vw - 2rem);
   background: ${gradient.panel};
   border: 1px solid ${palette.bronze};
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  /* Inner gold hairline inset from the border — a double frame */
+  box-shadow:
+    inset 0 0 0 4px rgba(23, 13, 9, 1),
+    inset 0 0 0 5px rgba(216, 182, 90, 0.35),
+    0 10px 30px rgba(0, 0, 0, 0.55);
 `
 
 export const FormTitle = styled.h1`
-  margin: 0 0 0.5rem;
+  margin: 0;
   font-size: 1.65rem;
   line-height: 1.25;
   color: ${palette.gold};
@@ -39,6 +44,21 @@ export const FormInput = styled.input`
   color: ${palette.cream};
   font-family: 'Cormorant Garamond', Georgia, serif;
   font-size: 1.15rem;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &::placeholder {
+    color: ${palette.parchment};
+    opacity: 0.6;
+  }
+
+  &:focus {
+    outline: none;
+    border-color: ${palette.gold};
+    box-shadow:
+      inset 0 2px 4px rgba(0, 0, 0, 0.4),
+      0 0 0 3px rgba(216, 182, 90, 0.18);
+  }
 `
 
 export const FormLabel = styled.label`
@@ -62,6 +82,26 @@ export const FormSubmitButton = styled.button`
   font-size: 1.05rem;
   font-weight: 600;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 0.2rem 0.5rem rgba(0, 0, 0, 0.45);
+  transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    filter: brightness(0.95);
+    transform: translateY(0);
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${palette.goldBright};
+    outline-offset: 2px;
+  }
 
   &:disabled {
     opacity: 0.6;

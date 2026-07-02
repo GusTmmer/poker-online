@@ -1,4 +1,5 @@
 import { makeCardFace } from './drawCard'
+import { formatChips } from './drawSeat'
 import {
   DECK_DELAY_MS, SLIDE_MS, FLIP_PAUSE_MS, FLIP_STAGGER_MS, FLIP_HALF_MS, DEAL_FLIGHT_MS,
 } from './constants'
@@ -121,7 +122,7 @@ export function tick(scene: SceneState, dt: number) {
     if (Math.abs(s.chipsDisplayValue - s.chipsValue) >= 0.5) {
       const factor = 1 - Math.pow(0.85, dt / 16.67)
       s.chipsDisplayValue += (s.chipsValue - s.chipsDisplayValue) * factor
-      s.chipsText.text = `${Math.round(s.chipsDisplayValue)} chips`
+      s.chipsText.text = formatChips(s.chipsDisplayValue)
     }
     if (s.isNextToAct && s.turnHaloGfx.visible) {
       s.turnHaloGfx.alpha = 0.6 + 0.4 * Math.sin(now * Math.PI * 2)

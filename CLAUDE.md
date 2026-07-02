@@ -27,7 +27,8 @@ docker build -t poker-server .
 # ── Frontend ──────────────────────────────────────────────────────────────────
 cd frontend
 
-# Start the Vite dev server (proxies /api and /ws to localhost:8080)
+# Start the Vite dev server (proxies /api and /ws to localhost:8080;
+# set BACKEND_PORT=<port> when the backend runs elsewhere — the e2e helpers honor it too)
 npm run dev
 
 # Build for production

@@ -23,6 +23,9 @@ const Banner = styled.div<{ variant?: 'pause' | 'error' }>`
   text-align: center;
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(216, 182, 90, 0.35);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
   z-index: 200;
 `
 

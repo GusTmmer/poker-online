@@ -19,6 +19,19 @@ const MenuButton = styled.button`
   font-size: 1.1rem;
   cursor: pointer;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transition: filter 0.15s, box-shadow 0.15s;
+
+  &:hover {
+    filter: brightness(1.25);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+      0 0 0.5rem rgba(216, 182, 90, 0.25);
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${palette.goldBright};
+    outline-offset: 2px;
+  }
 `
 
 const ErrorBadge = styled.span`

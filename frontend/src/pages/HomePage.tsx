@@ -13,6 +13,7 @@ import {
   FormSubmitButton,
   FormErrorText,
 } from '../components/ui/FormCard'
+import { FormOrnament } from '../components/ui/FormOrnament'
 
 const TabBar = styled.div`
   display: flex;
@@ -129,6 +130,7 @@ export function HomePage() {
     <FormPage>
       <FormCard onSubmit={mode === 'create' ? handleCreate : handleJoin}>
         <FormTitle>{mode === 'create' ? 'Start a poker table' : 'Join a table'}</FormTitle>
+        <FormOrnament />
         <TabBar>
           <Tab type="button" active={mode === 'create'} onClick={() => switchMode('create')}>
             Create

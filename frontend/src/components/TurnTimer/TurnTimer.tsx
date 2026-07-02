@@ -8,10 +8,12 @@ const Wrap = styled.div<{ urgent: boolean }>`
   flex-direction: column;
   align-items: center;
   gap: 0.1rem;
-  border: 1px solid ${(p) => (p.urgent ? palette.danger : palette.bronze)};
+  border: 1px solid ${(p) => (p.urgent ? palette.danger : 'rgba(216, 182, 90, 0.45)')};
   border-radius: 6px;
   padding: 0.3rem 0.6rem;
   min-width: 3.2rem;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
   transition: border-color 0.3s;
 `
 
