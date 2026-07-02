@@ -1,7 +1,9 @@
 import { request } from '@playwright/test'
 
 export default async function globalSetup() {
-  const ctx = await request.newContext({ baseURL: 'http://localhost:8080' })
+  const ctx = await request.newContext({
+    baseURL: `http://localhost:${process.env.BACKEND_PORT ?? '8080'}`,
+  })
   try {
     await ctx.get('/api/tables', { timeout: 5_000 })
   } catch {

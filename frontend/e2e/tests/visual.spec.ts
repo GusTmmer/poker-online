@@ -191,7 +191,8 @@ test.describe('visual: in-round', () => {
     const bot1 = await BotClient.create()
 
     try {
-      // 2-player table — easier to engineer an all-in scenario
+      // 2-player table — the human shoves all-in on their first turn. The bot never
+      // responds (120s timer), so the human sits at 0 chips mid-round: a stable state.
       const tableId = await bot1.createTable('Bot1', { startingChips: 300, turnTimerSeconds: 120 })
       await openTable(page, tableId)
 
@@ -202,29 +203,48 @@ test.describe('visual: in-round', () => {
 
       await bot1.startRound(tableId)
 
-      // Drive bots until human's turn, then human goes all-in
+      // Drive the bot until it's the human's turn, then shove. The slider UI can't
+      // reach All In when maxRaiseOnTop isn't step-aligned (see ControlBar), so the
+      // shove goes through the browser's own session (JWT cookie) directly.
       await driveBotsUntil(humanId!, [bot1], tableId)
       await expect
         .poll(() => gs(page).then((s) => s?.nextPlayerIdToAct), { timeout: 10_000 })
         .toBe(humanId)
-      await page.locator('[data-testid="btn-call"]').click()
+      await page.evaluate(async (id) => {
+        const res = await fetch(`/api/tables/${id}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ type: 'ALL_IN' }),
+        })
+        if (!res.ok) throw new Error(`ALL_IN rejected: ${res.status}`)
+      }, tableId)
 
-      // Now drive bot until human has 0 chips (mid-round)
-      for (let i = 0; i < 20; i++) {
-        const state = await bot1.getState(tableId)
-        const humanChips = state.players.find((p) => p.id === humanId)?.chips ?? -1
-        if (humanChips === 0) {
-          const current = await gs(page)
-          if (current?.roundStage != null) {
-            await page.waitForTimeout(CANVAS_SETTLE_MS)
-            const bar = page.locator('[data-testid="control-bar"]')
-            await expect(bar).toHaveScreenshot('control-bar-zero-chips.png', SNAP_OPTS)
-            return
-          }
-        }
-        if (state.nextPlayerIdToAct === bot1.playerId) await bot1.act(tableId, 'CALL')
-        await new Promise((r) => setTimeout(r, 400))
-      }
+      // Human must now be at 0 chips with the round still in progress.
+      await expect
+        .poll(
+          async () => {
+            const s = await gs(page)
+            return {
+              chips: s?.players.find((p) => p.id === humanId)?.chips,
+              inRound: s?.roundStage != null,
+            }
+          },
+          { timeout: 10_000 },
+        )
+        .toEqual({ chips: 0, inRound: true })
+
+      // Spectating mode: the action buttons are gone, only the bar shell remains.
+      await expect(page.locator('[data-testid="btn-fold"]')).toHaveCount(0)
+      await expect(page.locator('[data-testid="btn-call"]')).toHaveCount(0)
+
+      await page.waitForTimeout(CANVAS_SETTLE_MS)
+      const bar = page.locator('[data-testid="control-bar"]')
+      // Mask the countdown — its digits change between runs.
+      await expect(bar).toHaveScreenshot('control-bar-zero-chips.png', {
+        ...SNAP_OPTS,
+        mask: [page.locator('[data-testid="turn-timer"]')],
+      })
     } finally {
       await bot1.dispose()
     }
