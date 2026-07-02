@@ -61,7 +61,7 @@ export function TurnTimer({ gameState, myPlayerId }: Props) {
   const label = isMe ? 'Your turn' : 'Opponent'
 
   return (
-    <Wrap urgent={urgent}>
+    <Wrap data-testid="turn-timer" urgent={urgent}>
       <Seconds urgent={urgent}>{secondsLeft}</Seconds>
       <Label>{label}</Label>
     </Wrap>
