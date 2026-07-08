@@ -4,6 +4,7 @@ import styled from '@emotion/styled'
 import { createTable, joinTable } from '../api/client'
 import { ApiError } from '../api/types'
 import { palette } from '../theme'
+import { MyTablesPanel } from '../components/MyTablesPanel'
 import {
   FormPage,
   FormCard,
@@ -71,6 +72,7 @@ export function HomePage() {
   const [mode, setMode] = useState<Mode>('create')
 
   const [createName, setCreateName] = useState('')
+  const [tableName, setTableName] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(6)
   const [startingChips, setStartingChips] = useState(1000)
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(30)
@@ -96,6 +98,7 @@ export function HomePage() {
     try {
       const response = await createTable({
         playerName: createName.trim(),
+        name: tableName.trim(),
         maxPlayers,
         startingChips,
         turnTimerSeconds,
@@ -128,6 +131,7 @@ export function HomePage() {
 
   return (
     <FormPage>
+      <MyTablesPanel />
       <FormCard onSubmit={mode === 'create' ? handleCreate : handleJoin}>
         <FormTitle>{mode === 'create' ? 'Start a poker table' : 'Join a table'}</FormTitle>
         <FormOrnament />
@@ -150,6 +154,17 @@ export function HomePage() {
                 placeholder="Alice"
                 maxLength={24}
                 required
+              />
+            </FormLabel>
+            <FormLabel>
+              <span>
+                Table name <span style={{ color: '#7a6a4a' }}>(optional)</span>
+              </span>
+              <FormInput
+                value={tableName}
+                onChange={(e) => setTableName(e.target.value)}
+                placeholder="Friday Night Poker"
+                maxLength={40}
               />
             </FormLabel>
             <FieldRow>

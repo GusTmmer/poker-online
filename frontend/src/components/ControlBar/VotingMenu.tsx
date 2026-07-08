@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useErrorFlash } from '../../hooks/useErrorFlash'
 import styled from '@emotion/styled'
 import type { GameStateUpdate } from '../../api/types'
-import { createVoteSession, requestKick, requestPause, requestUnpause } from '../../api/client'
+import { createVoteSession, renameTable, requestKick, requestPause, requestUnpause } from '../../api/client'
+import { useSession } from '../../context/SessionContext'
 import { gradient, palette } from '../../theme'
 
 const MenuRoot = styled.div`
@@ -88,7 +89,23 @@ const Divider = styled.div`
   margin: 0.2rem 0;
 `
 
-type MenuView = null | 'main' | 'kick'
+const RenameInput = styled.input`
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.2rem;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 0.95rem;
+  color: ${palette.cream};
+  background: ${palette.panelBottom};
+  border: 1px solid ${palette.gold};
+  border-radius: 4px;
+
+  &:focus-visible {
+    outline: 2px solid ${palette.goldBright};
+    outline-offset: 1px;
+  }
+`
+
+type MenuView = null | 'main' | 'kick' | 'rename'
 
 interface VotingMenuProps {
   gameState: GameStateUpdate
@@ -98,8 +115,29 @@ interface VotingMenuProps {
 
 export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) {
   const [menuView, setMenuView] = useState<MenuView>(null)
+  const [nameDraft, setNameDraft] = useState('')
+  const [savingName, setSavingName] = useState(false)
+  const { tableInfo, refresh } = useSession()
   const { failed, showError } = useErrorFlash()
   const rootRef = useRef<HTMLDivElement>(null)
+
+  function openRename() {
+    setNameDraft(tableInfo?.name ?? '')
+    setMenuView('rename')
+  }
+
+  async function saveName() {
+    setSavingName(true)
+    try {
+      await renameTable(tableId, nameDraft)
+      await refresh()
+      setMenuView(null)
+    } catch {
+      showError()
+    } finally {
+      setSavingName(false)
+    }
+  }
 
   useEffect(() => {
     if (!menuView) return
@@ -131,6 +169,8 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
       {failed && <ErrorBadge>failed</ErrorBadge>}
       {menuView === 'main' && (
         <Dropdown>
+          <Item onClick={openRename}>Rename table…</Item>
+          <Divider />
           {gameState.gameStatus === 'PAUSED' ? (
             <Item onClick={() => fire(() => requestUnpause(tableId))}>Vote: Unpause game</Item>
           ) : (
@@ -144,6 +184,25 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
           </Item>
           <Divider />
           <Item onClick={() => setMenuView('kick')}>Vote: Kick player…</Item>
+        </Dropdown>
+      )}
+      {menuView === 'rename' && (
+        <Dropdown>
+          <RenameInput
+            autoFocus
+            value={nameDraft}
+            maxLength={40}
+            placeholder="Table name"
+            disabled={savingName}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void saveName()
+              if (e.key === 'Escape') setMenuView('main')
+            }}
+          />
+          <Item onClick={() => void saveName()}>Save name</Item>
+          <Divider />
+          <Item onClick={() => setMenuView('main')}>← Back</Item>
         </Dropdown>
       )}
       {menuView === 'kick' && (

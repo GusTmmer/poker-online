@@ -12,7 +12,9 @@ export const FormCard = styled.form`
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
-  padding: 2.5rem;
+  /* Slightly tighter horizontal padding (width fixed via border-box) so the two-column
+     field grid is wide enough to keep labels like "Blind increase every" on one line. */
+  padding: 2.5rem 1.75rem;
   width: 380px;
   max-width: calc(100vw - 2rem);
   background: ${gradient.panel};

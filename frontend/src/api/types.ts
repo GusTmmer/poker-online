@@ -1,5 +1,6 @@
 export interface CreateTableRequest {
   playerName: string
+  name?: string
   startingChips?: number
   turnTimerSeconds?: number
   maxPlayers?: number
@@ -15,6 +16,19 @@ export interface CreateTableResponse {
 
 export interface JoinRequest {
   playerName: string
+}
+
+export interface TableSummary {
+  tableId: number
+  name: string
+  playerName: string
+  gameStatus: GameStatus
+  playerCount: number
+  maxPlayers: number
+}
+
+export interface MyTablesResponse {
+  tables: TableSummary[]
 }
 
 export interface JoinResponse {
@@ -34,6 +48,7 @@ export interface PlayerInfo {
 
 export interface TableInfoResponse {
   tableId: number
+  name: string
   players: PlayerInfo[]
   isOpen: boolean
   maxPlayers: number
@@ -54,7 +69,8 @@ export interface KickRequest {
 }
 
 export interface SettingsRequest {
-  isOpen: boolean
+  isOpen?: boolean
+  name?: string
 }
 
 export type StatusMessage = { status: string; sessionId?: string }
