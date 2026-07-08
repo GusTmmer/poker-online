@@ -7,6 +7,7 @@ import { PixiPokerTable } from '../components/PixiTable/PixiPokerTable'
 import { ControlBar } from '../components/ControlBar/ControlBar'
 import { VotePopupLayer } from '../components/VotePopup/VotePopupLayer'
 import { Toasts } from '../components/Toasts'
+import { BlindsBanner } from '../components/BlindsBanner'
 import { gradient, palette } from '../theme'
 
 const Status = styled.p`
@@ -78,6 +79,7 @@ export function GameScreen() {
       <LeaveButton data-testid="btn-leave" aria-label="Leave table" title="Leave" onClick={() => navigate('/')}>
         <span aria-hidden>↩</span>
       </LeaveButton>
+      <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
       <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} />
       <ControlBar gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} />
       <VotePopupLayer gameState={gameState} tableId={tableId} />
