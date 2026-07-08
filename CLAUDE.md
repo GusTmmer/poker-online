@@ -133,6 +133,7 @@ e2e/
 | `CLOUD_TASKS_LOCATION` / `CLOUD_TASKS_QUEUE` | `us-central1` / `poker-timers` | Cloud Tasks queue for durable timers. |
 | `VOTE_TIMEOUT_SECONDS` | `60` | How long a vote stays open before its Cloud Task auto-closes it. |
 | `RATE_LIMIT_MUTATIONS` / `RATE_LIMIT_REFILL_SECONDS` | `30` / `60` | Per-IP cap on table create + join. |
+| `RATE_LIMIT_READS` / `RATE_LIMIT_READ_REFILL_SECONDS` | `60` / `60` | Per-IP cap on read endpoints that fan out Firestore reads (`GET /api/my-tables`). Separate bucket so listing never drains the create/join budget. |
 
 ## Deployment
 

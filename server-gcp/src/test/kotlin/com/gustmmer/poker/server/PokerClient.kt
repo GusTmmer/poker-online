@@ -37,7 +37,7 @@ class PokerClient(private val http: HttpClient) {
         blindEscalationMultiplier: Double = 2.0,
     ): CreateTableResponse =
         http.post(TablesResource()) {
-            setJsonBody(CreateTableRequest(playerName, startingChips, turnTimerSeconds, maxPlayers, blindEscalationOrbits, blindEscalationMultiplier))
+            setJsonBody(CreateTableRequest(playerName = playerName, startingChips = startingChips, turnTimerSeconds = turnTimerSeconds, maxPlayers = maxPlayers, blindEscalationOrbits = blindEscalationOrbits, blindEscalationMultiplier = blindEscalationMultiplier))
         }.body()
 
     suspend fun getTable(tableId: Int): TableInfoResponse =

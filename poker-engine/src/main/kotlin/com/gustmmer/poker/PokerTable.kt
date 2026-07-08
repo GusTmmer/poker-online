@@ -262,8 +262,14 @@ class PokerTable(
         return remaining
     }
 
-    fun updateConfig(isOpen: Boolean) {
-        state = state.copy(config = state.config.copy(isOpen = isOpen))
+    /** Update table-level settings in place; only the non-null arguments are applied. */
+    fun updateConfig(isOpen: Boolean? = null, name: String? = null) {
+        state = state.copy(
+            config = state.config.copy(
+                isOpen = isOpen ?: state.config.isOpen,
+                name = name ?: state.config.name,
+            )
+        )
         dirty = true
     }
 

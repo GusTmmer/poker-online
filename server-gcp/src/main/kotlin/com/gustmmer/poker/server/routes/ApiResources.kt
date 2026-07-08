@@ -13,12 +13,20 @@ import kotlinx.serialization.Serializable
 class TablesResource
 
 @Serializable
+@Resource("/api/my-tables")
+class MyTablesResource
+
+@Serializable
 @Resource("/api/tables/{tableId}")
 data class TableResource(val tableId: Int)
 
 @Serializable
 @Resource("/api/tables/{tableId}/players")
 data class TablePlayersResource(val tableId: Int)
+
+@Serializable
+@Resource("/api/tables/{tableId}/players/me")
+data class TablePlayerMeResource(val tableId: Int)
 
 @Serializable
 @Resource("/api/tables/{tableId}/action")

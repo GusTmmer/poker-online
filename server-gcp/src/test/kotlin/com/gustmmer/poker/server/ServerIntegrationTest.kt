@@ -511,6 +511,212 @@ class ServerIntegrationTest {
      * Tries each player client in turn, sending a FOLD. Repeats until the round
      * ends or no player can act. This avoids needing to know whose turn it is.
      */
+    @Test
+    fun `my-tables lists every table the browser holds a session for`() = testApplication {
+        val client = configureTestApp()
+
+        // Same client (one cookie jar) creates one table and joins another → two poker_table_* cookies.
+        val firstId = Json.parseToJsonElement(
+            client.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        // A second table created by someone else, which Alice then joins.
+        val host = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        val secondId = Json.parseToJsonElement(
+            host.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Bob","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+        client.post("/api/tables/$secondId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Alice"}""")
+        }
+
+        val response = client.get("/api/my-tables")
+        assertEquals(HttpStatusCode.OK, response.status)
+
+        val tables = Json.parseToJsonElement(response.bodyAsText()).jsonObject["tables"]!!.jsonArray
+        val byId = tables.associateBy { it.jsonObject["tableId"]!!.jsonPrimitive.int }
+        assertEquals(setOf(firstId, secondId), byId.keys)
+        // Alice created the first (host) and joined the second → she's "Alice" in both.
+        assertEquals("Alice", byId[firstId]!!.jsonObject["playerName"]!!.jsonPrimitive.content)
+        assertEquals(2, byId[secondId]!!.jsonObject["playerCount"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `my-tables supports multiple tables and switching between them`() = testApplication {
+        // One browser (one cookie jar) — the whole point is that it can hold several sessions at once.
+        val alice = configureTestApp()
+
+        // Table A: Alice creates it, so she's player 0 there.
+        val createdA = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject
+        val tableAId = createdA["tableId"]!!.jsonPrimitive.int
+        val aliceIdA = createdA["playerId"]!!.jsonPrimitive.int
+
+        // Table B: Bob creates it (player 0); Alice joins as a later player.
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        val tableBId = Json.parseToJsonElement(
+            bob.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Bob","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+        val joinB = alice.post("/api/tables/$tableBId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Alice"}""")
+        }
+        assertEquals(HttpStatusCode.Created, joinB.status)
+        val aliceIdB = Json.parseToJsonElement(joinB.bodyAsText()).jsonObject["playerId"]!!.jsonPrimitive.int
+
+        // ── List: both tables appear from the single cookie jar. ────────────
+        val listed = Json.parseToJsonElement(alice.get("/api/my-tables").bodyAsText())
+            .jsonObject["tables"]!!.jsonArray
+            .map { it.jsonObject["tableId"]!!.jsonPrimitive.int }
+            .toSet()
+        assertEquals(setOf(tableAId, tableBId), listed)
+
+        // ── Switch: the same jar authenticates against each table and is recognised with the
+        //    correct per-table identity — that's what "switching between tables" means. ──────
+        val infoA = Json.parseToJsonElement(alice.get("/api/tables/$tableAId").bodyAsText()).jsonObject
+        assertTrue(infoA["hasSession"]!!.jsonPrimitive.boolean)
+        assertEquals(aliceIdA, infoA["sessionPlayerId"]!!.jsonPrimitive.int)
+
+        val infoB = Json.parseToJsonElement(alice.get("/api/tables/$tableBId").bodyAsText()).jsonObject
+        assertTrue(infoB["hasSession"]!!.jsonPrimitive.boolean)
+        assertEquals(aliceIdB, infoB["sessionPlayerId"]!!.jsonPrimitive.int)
+
+        // Distinct identities per table prove these are independent sessions, not one shared token.
+        assertNotEquals(aliceIdA, aliceIdB)
+    }
+
+    @Test
+    fun `table name is set on create, editable via settings, and surfaced in my-tables`() = testApplication {
+        val client = configureTestApp()
+
+        val tableId = Json.parseToJsonElement(
+            client.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","name":"Friday Night","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        // Name flows into table info and the my-tables listing.
+        assertEquals(
+            "Friday Night",
+            Json.parseToJsonElement(client.get("/api/tables/$tableId").bodyAsText())
+                .jsonObject["name"]!!.jsonPrimitive.content
+        )
+        assertEquals(
+            "Friday Night",
+            Json.parseToJsonElement(client.get("/api/my-tables").bodyAsText())
+                .jsonObject["tables"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content
+        )
+
+        // Rename via settings — name only, isOpen omitted; the value is trimmed.
+        val patch = client.patch("/api/tables/$tableId/settings") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"  Saturday Showdown  "}""")
+        }
+        assertEquals(HttpStatusCode.OK, patch.status)
+        assertEquals(
+            "Saturday Showdown",
+            Json.parseToJsonElement(client.get("/api/tables/$tableId").bodyAsText())
+                .jsonObject["name"]!!.jsonPrimitive.content
+        )
+    }
+
+    @Test
+    fun `leaving a table frees the seat, clears the cookie, and drops it from my-tables`() = testApplication {
+        val alice = configureTestApp()
+
+        // A 2-seat table: Alice creates it, Bob joins → full.
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":2}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        assertEquals(
+            HttpStatusCode.Created,
+            bob.post("/api/tables/$tableId/players") {
+                contentType(ContentType.Application.Json); setBody("""{"playerName":"Bob"}""")
+            }.status,
+        )
+
+        // Full: a third player is refused.
+        val charlie = createClient { install(ContentNegotiation) { json() }; install(HttpCookies) }
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            charlie.post("/api/tables/$tableId/players") {
+                contentType(ContentType.Application.Json); setBody("""{"playerName":"Charlie"}""")
+            }.status,
+        )
+
+        // Alice permanently leaves.
+        assertEquals(HttpStatusCode.OK, alice.delete("/api/tables/$tableId/players/me").status)
+
+        // Her seat is gone (roster back to 1) and her cookie was cleared → my-tables now empty for her.
+        assertEquals(
+            1,
+            Json.parseToJsonElement(bob.get("/api/tables/$tableId").bodyAsText())
+                .jsonObject["players"]!!.jsonArray.size,
+        )
+        assertTrue(
+            Json.parseToJsonElement(alice.get("/api/my-tables").bodyAsText())
+                .jsonObject["tables"]!!.jsonArray.isEmpty(),
+        )
+
+        // The freed seat is now joinable.
+        assertEquals(
+            HttpStatusCode.Created,
+            charlie.post("/api/tables/$tableId/players") {
+                contentType(ContentType.Application.Json); setBody("""{"playerName":"Charlie"}""")
+            }.status,
+        )
+    }
+
+    @Test
+    fun `my-tables is empty when the browser has no session cookies`() = testApplication {
+        val client = configureTestApp()
+        val response = client.get("/api/my-tables")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(
+            Json.parseToJsonElement(response.bodyAsText()).jsonObject["tables"]!!.jsonArray.isEmpty()
+        )
+    }
+
+    @Test
+    fun `my-tables omits and clears a stale session cookie`() = testApplication {
+        // No HttpCookies plugin: we control the Cookie header by hand to inject a stale-but-valid token.
+        configureTestApp()
+        val rawClient = createClient { install(ContentNegotiation) { json() } }
+
+        // A validly-signed JWT for a table that does not exist → server must drop it and clear the cookie.
+        val staleToken = com.gustmmer.poker.server.session.JwtService(testConfig.jwtSecret)
+            .createToken(tableId = 999999, playerId = 0)
+
+        val response = rawClient.get("/api/my-tables") {
+            header(HttpHeaders.Cookie, "poker_table_999999=$staleToken")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(
+            Json.parseToJsonElement(response.bodyAsText()).jsonObject["tables"]!!.jsonArray.isEmpty()
+        )
+        val setCookie = response.headers.getAll(HttpHeaders.SetCookie)?.joinToString("; ").orEmpty()
+        assertTrue(setCookie.contains("poker_table_999999")) { "stale cookie should be cleared" }
+    }
+
     private suspend fun foldUntilRoundEnds(clients: List<HttpClient>, tableId: Int) {
         var safety = 20
         while (safety-- > 0) {

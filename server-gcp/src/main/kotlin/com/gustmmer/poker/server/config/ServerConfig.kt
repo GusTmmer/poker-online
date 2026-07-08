@@ -14,6 +14,13 @@ data class ServerConfig(
     val rateLimitMutations: Int = 30,
     val rateLimitRefillSeconds: Long = 60,
     /**
+     * Per-IP cap on read endpoints that do per-request Firestore lookups (currently `GET /api/my-tables`,
+     * which fans out one read per table cookie the browser holds). Kept separate from
+     * [rateLimitMutations] so listing tables never consumes a player's create/join budget.
+     */
+    val rateLimitReads: Int = 60,
+    val rateLimitReadRefillSeconds: Long = 60,
+    /**
      * Directory of built frontend assets to serve at `/` (same-origin with the API, so no CORS and no
      * `SameSite=None` cookie). Null/absent → API only (dev uses the Vite proxy instead).
      */
@@ -47,6 +54,8 @@ data class ServerConfig(
             voteTimeoutSeconds = System.getenv("VOTE_TIMEOUT_SECONDS")?.toLongOrNull() ?: 60,
             rateLimitMutations = System.getenv("RATE_LIMIT_MUTATIONS")?.toIntOrNull() ?: 30,
             rateLimitRefillSeconds = System.getenv("RATE_LIMIT_REFILL_SECONDS")?.toLongOrNull() ?: 60,
+            rateLimitReads = System.getenv("RATE_LIMIT_READS")?.toIntOrNull() ?: 60,
+            rateLimitReadRefillSeconds = System.getenv("RATE_LIMIT_READ_REFILL_SECONDS")?.toLongOrNull() ?: 60,
             staticDir = System.getenv("STATIC_DIR")?.takeIf { it.isNotBlank() },
             internalToken = System.getenv("INTERNAL_TOKEN") ?: DEFAULT_INTERNAL_TOKEN,
         )

@@ -1,6 +1,7 @@
 package com.gustmmer.poker.server.routes
 
 import com.gustmmer.poker.server.MutationRateLimit
+import com.gustmmer.poker.server.ReadRateLimit
 import com.gustmmer.poker.server.service.GameService
 import com.gustmmer.poker.server.service.ServiceResult
 import com.gustmmer.poker.server.service.VotingService
@@ -20,6 +21,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class CreateTableRequest(
     val playerName: String,
+    val name: String = "",
     val startingChips: Int = 1000,
     val turnTimerSeconds: Int = 30,
     val maxPlayers: Int = 6,
@@ -43,11 +45,12 @@ data class ActionRequest(val type: String, val value: Int? = null)
 data class KickRequest(val targetPlayerId: Int)
 
 @Serializable
-data class SettingsRequest(val isOpen: Boolean)
+data class SettingsRequest(val isOpen: Boolean? = null, val name: String? = null)
 
 @Serializable
 data class TableInfoResponse(
     val tableId: Int,
+    val name: String = "",
     val players: List<PlayerInfo>,
     val isOpen: Boolean,
     val maxPlayers: Int,
@@ -59,6 +62,19 @@ data class TableInfoResponse(
 
 @Serializable
 data class PlayerInfo(val id: Int, val name: String, val status: String, val chips: Int = 0)
+
+@Serializable
+data class TableSummary(
+    val tableId: Int,
+    val name: String,
+    val playerName: String,
+    val gameStatus: String,
+    val playerCount: Int,
+    val maxPlayers: Int,
+)
+
+@Serializable
+data class MyTablesResponse(val tables: List<TableSummary>)
 
 fun Application.configureTableRoutes(
     jwtService: JwtService,
@@ -121,11 +137,63 @@ fun Application.configureTableRoutes(
             }
         }
 
+        // Discovery: which tables does this browser hold a session for? The per-table JWT cookies are
+        // httpOnly (JS can't read them), so the server enumerates them, verifies each, and confirms the
+        // player is still seated. Stale cookies (table expired or player kicked) are cleared in the response.
+        rateLimit(ReadRateLimit) {
+            get<MyTablesResource> {
+                val sessions = call.request.cookies.rawCookies
+                    .filterKeys { it.startsWith(JwtService.COOKIE_PREFIX) }
+                    .values
+                    .mapNotNull { jwtService.verify(it) }
+
+                val summaries = sessions.mapNotNull { session ->
+                    gameService.getTableSummary(session.tableId, session.playerId)
+                        ?: run {
+                            // Stale session — expire the cookie so it stops riding along on every request.
+                            call.response.cookies.append(
+                                Cookie(
+                                    name = jwtService.cookieName(session.tableId),
+                                    value = "",
+                                    path = "/",
+                                    httpOnly = true,
+                                    maxAge = 0,
+                                )
+                            )
+                            null
+                        }
+                }
+
+                call.respond(MyTablesResponse(summaries))
+            }
+        }
+
         get<TableResource> { resource ->
             val tableId = resource.tableId
             val session = call.extractSession(jwtService, tableId)
 
             call.respond(gameService.getTableInfo(tableId, session?.playerId))
+        }
+
+        // Permanently leave a table: free the seat and drop the table from this browser's my-tables
+        // list by clearing its session cookie. Distinct from the soft "go offline" a disconnect causes.
+        delete<TablePlayerMeResource> { resource ->
+            val tableId = resource.tableId
+
+            val session = call.extractSession(jwtService, tableId)
+                ?: return@delete call.respondUnauthorized()
+
+            val result = gameService.leaveTable(tableId, session.playerId)
+            call.response.cookies.append(
+                Cookie(
+                    name = jwtService.cookieName(tableId),
+                    value = "",
+                    path = "/",
+                    httpOnly = true,
+                    maxAge = 0,
+                )
+            )
+            call.respond(result)
         }
 
         post<TableActionResource> { resource ->
@@ -210,7 +278,7 @@ fun Application.configureTableRoutes(
                 ?: return@patch call.respondUnauthorized()
 
             val request = call.receive<SettingsRequest>()
-            call.respond(gameService.updateSettings(tableId, request.isOpen))
+            call.respond(gameService.updateSettings(tableId, request.isOpen, request.name))
         }
     }
 }

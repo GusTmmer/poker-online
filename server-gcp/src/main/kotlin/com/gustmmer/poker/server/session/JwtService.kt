@@ -33,7 +33,12 @@ class JwtService(secret: String) {
         }
     }
 
-    fun cookieName(tableId: Int) = "poker_table_$tableId"
+    fun cookieName(tableId: Int) = "$COOKIE_PREFIX$tableId"
+
+    companion object {
+        /** Prefix for every per-table session cookie. Enumerated by the "my tables" discovery endpoint. */
+        const val COOKIE_PREFIX = "poker_table_"
+    }
 }
 
 fun RoutingCall.extractSession(jwtService: JwtService, tableId: Int): PlayerSession? {

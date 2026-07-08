@@ -7,6 +7,8 @@ data class TableConfig(
     val startingChips: Int,
     val turnTimerSeconds: Int,
     val maxPlayers: Int,
+    /** Human-friendly label so players can tell tables apart; empty means "unnamed" (UI falls back to id). */
+    val name: String = "",
     val isOpen: Boolean = true,
     val blindEscalationOrbits: Int = 2,
     val blindEscalationMultiplier: Double = 2.0,

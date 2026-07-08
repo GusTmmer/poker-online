@@ -38,6 +38,9 @@ import kotlin.time.Duration.Companion.seconds
 /** Per-IP rate-limit bucket for state-creating endpoints (table create + join). */
 val MutationRateLimit = RateLimitName("mutations")
 
+/** Per-IP rate-limit bucket for read endpoints that fan out Firestore reads (e.g. `GET /api/my-tables`). */
+val ReadRateLimit = RateLimitName("reads")
+
 fun main() {
     val config = ServerConfig.fromEnvironment()
     config.assertSecretsAreSet()
@@ -116,6 +119,10 @@ fun Application.configurePlugins(config: ServerConfig) {
     install(RateLimit) {
         register(MutationRateLimit) {
             rateLimiter(limit = config.rateLimitMutations, refillPeriod = config.rateLimitRefillSeconds.seconds)
+            requestKey { call -> call.request.origin.remoteHost }
+        }
+        register(ReadRateLimit) {
+            rateLimiter(limit = config.rateLimitReads, refillPeriod = config.rateLimitReadRefillSeconds.seconds)
             requestKey { call -> call.request.origin.remoteHost }
         }
     }

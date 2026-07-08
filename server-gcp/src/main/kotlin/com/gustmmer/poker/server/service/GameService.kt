@@ -8,6 +8,7 @@ import com.gustmmer.poker.server.routes.CreateTableRequest
 import com.gustmmer.poker.server.routes.JoinResponse
 import com.gustmmer.poker.server.routes.PlayerInfo
 import com.gustmmer.poker.server.routes.TableInfoResponse
+import com.gustmmer.poker.server.routes.TableSummary
 import com.gustmmer.poker.server.timer.TurnTimerManager
 import io.ktor.http.HttpStatusCode
 import org.slf4j.LoggerFactory
@@ -36,6 +37,7 @@ class GameService(
             startingChips = request.startingChips,
             turnTimerSeconds = request.turnTimerSeconds,
             maxPlayers = request.maxPlayers,
+            name = normalizeTableName(request.name),
             blindEscalationOrbits = request.blindEscalationOrbits,
             blindEscalationMultiplier = request.blindEscalationMultiplier,
         )
@@ -58,6 +60,7 @@ class GameService(
         return ServiceResult.Ok(
             TableInfoResponse(
                 tableId = state.id,
+                name = state.config.name,
                 players = state.players.map { PlayerInfo(it.id, it.name, it.status.name, it.chips) },
                 isOpen = state.config.isOpen,
                 maxPlayers = state.config.maxPlayers,
@@ -67,6 +70,45 @@ class GameService(
                 nextPlayerIdToAct = nextPlayerIdToAct,
             )
         )
+    }
+
+    /**
+     * Lightweight summary for the "my tables" discovery endpoint. Returns null when the table no longer
+     * exists (expired via TTL) or [playerId] is no longer a member (kicked/left) — the caller treats a
+     * null as a stale session cookie to prune. Read-only: uses [loadTable], never commits.
+     */
+    suspend fun getTableSummary(tableId: Int, playerId: Int): TableSummary? {
+        val state = loadTable(tableId, persistence) ?: return null
+        val player = state.players.firstOrNull { it.id == playerId } ?: return null
+        return TableSummary(
+            tableId = state.id,
+            name = state.config.name,
+            playerName = player.name,
+            gameStatus = state.gameStatus.name,
+            playerCount = state.players.size,
+            maxPlayers = state.config.maxPlayers,
+        )
+    }
+
+    /**
+     * Permanently removes [playerId] from the table, freeing their seat for a new player — the hard
+     * counterpart to going OFFLINE (which keeps the seat). Safe to call mid-hand: the active hand holds
+     * its own participant snapshot, so it still resolves correctly, and we set the player OFFLINE first
+     * so auto-play folds them on their turn ([PokerTable.kickPlayer] also auto-folds them if they're the
+     * current bettor). Idempotent — a no-op if they're already gone.
+     */
+    suspend fun leaveTable(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
+        val result = withTable(tableId, persistence) { table ->
+            if (table.currentState.players.none { it.id == playerId }) {
+                return@withTable ServiceResult.Ok(mapOf("status" to "not_seated"))
+            }
+            table.setPlayerOffline(playerId)
+            table.kickPlayer(playerId)
+            ServiceResult.Ok(mapOf("status" to "left"))
+        }
+        // The removal may have auto-folded the current bettor and advanced the round; resync the timer.
+        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        return result
     }
 
     suspend fun joinTable(tableId: Int, playerName: String): ServiceResult<JoinResponse> {
@@ -244,11 +286,14 @@ class GameService(
         return result
     }
 
-    suspend fun updateSettings(tableId: Int, isOpen: Boolean): ServiceResult<Map<String, String>> {
+    suspend fun updateSettings(tableId: Int, isOpen: Boolean?, name: String?): ServiceResult<Map<String, String>> {
         val result = withTable(tableId, persistence) { table ->
-            table.updateConfig(isOpen = isOpen)
+            table.updateConfig(isOpen = isOpen, name = name?.let(::normalizeTableName))
             ServiceResult.Ok(mapOf("status" to "settings_updated"))
         }
         return result
     }
+
+    /** Trim and length-cap a user-supplied table name so it stays a sane, storable label. */
+    private fun normalizeTableName(raw: String): String = raw.trim().take(40)
 }
