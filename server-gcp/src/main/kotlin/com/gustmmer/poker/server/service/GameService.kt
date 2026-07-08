@@ -247,7 +247,6 @@ class GameService(
         return result
     }
 
-    // TODO: Rename route to set-player-online
     suspend fun setPlayerOnline(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         // Online flip + any auto-unpause stage together and commit once; the timer cascade runs after.
         var unpaused = false
@@ -295,5 +294,5 @@ class GameService(
     }
 
     /** Trim and length-cap a user-supplied table name so it stays a sane, storable label. */
-    private fun normalizeTableName(raw: String): String = raw.trim().take(40)
+    private fun normalizeTableName(raw: String): String = raw.trim().take(TableConfig.MAX_NAME_LENGTH)
 }

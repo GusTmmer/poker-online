@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import styled from '@emotion/styled'
 import { createTable, joinTable } from '../api/client'
 import { ApiError } from '../api/types'
+import { MAX_TABLE_NAME_LENGTH } from '../api/tableLabel'
 import { palette } from '../theme'
 import { MyTablesPanel } from '../components/MyTablesPanel'
 import {
@@ -164,7 +165,7 @@ export function HomePage() {
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value)}
                 placeholder="Friday Night Poker"
-                maxLength={40}
+                maxLength={MAX_TABLE_NAME_LENGTH}
               />
             </FormLabel>
             <FieldRow>

@@ -162,14 +162,6 @@ class PokerTable(
         return true
     }
 
-    // TODO: Add route to cleanly leave, possibly triggered by 'on_window_close' event in FE.
-    //  Evaluate if websocket getting closed is sufficient for this.
-    fun playerLeave(playerId: Int) {
-        val player = state.players.find { it.id == playerId } ?: return
-        player.setAsOffline()
-        dirty = true
-    }
-
     /**
      * Brings an OFFLINE or IDLE [playerId] back ONLINE (staged). ONLINE and ELIMINATED players are
      * left untouched. Returns true if the status actually changed. Compose with [unpause] inside one

@@ -3,6 +3,7 @@ import { useErrorFlash } from '../../hooks/useErrorFlash'
 import styled from '@emotion/styled'
 import type { GameStateUpdate } from '../../api/types'
 import { createVoteSession, renameTable, requestKick, requestPause, requestUnpause } from '../../api/client'
+import { MAX_TABLE_NAME_LENGTH } from '../../api/tableLabel'
 import { useSession } from '../../context/SessionContext'
 import { gradient, palette } from '../../theme'
 
@@ -191,7 +192,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
           <RenameInput
             autoFocus
             value={nameDraft}
-            maxLength={40}
+            maxLength={MAX_TABLE_NAME_LENGTH}
             placeholder="Table name"
             disabled={savingName}
             onChange={(e) => setNameDraft(e.target.value)}

@@ -233,7 +233,6 @@ fun Application.configureTableRoutes(
             call.respond(gameService.readyUp(tableId, session.playerId))
         }
 
-        // TODO: Rename route to set-player-online
         post<TableActivateResource> { resource ->
             val tableId = resource.tableId
 

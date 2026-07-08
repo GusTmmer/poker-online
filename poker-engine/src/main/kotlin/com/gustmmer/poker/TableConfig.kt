@@ -12,4 +12,9 @@ data class TableConfig(
     val isOpen: Boolean = true,
     val blindEscalationOrbits: Int = 2,
     val blindEscalationMultiplier: Double = 2.0,
-)
+) {
+    companion object {
+        /** Max stored length of a table [name]; the server truncates to this and the UI caps input at it. */
+        const val MAX_NAME_LENGTH = 40
+    }
+}
