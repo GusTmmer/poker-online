@@ -10,7 +10,7 @@ import io.ktor.server.routing.*
 
 data class PlayerSession(val tableId: Int, val playerId: Int)
 
-class JwtService(secret: String) {
+class JwtService(secret: String, private val secureCookies: Boolean = false) {
     private val algorithm = Algorithm.HMAC256(secret)
     private val verifier = JWT.require(algorithm).build()
 
@@ -34,6 +34,33 @@ class JwtService(secret: String) {
     }
 
     fun cookieName(tableId: Int) = "$COOKIE_PREFIX$tableId"
+
+    /**
+     * The session cookie carrying [token] for [tableId]. `httpOnly` (JS can't read it), `SameSite=Lax`
+     * (sent on top-level navigation, blocks cross-site CSRF), and `Secure` in production. All cookie
+     * attributes live here so every set/clear site stays consistent.
+     */
+    fun sessionCookie(tableId: Int, token: String): Cookie =
+        Cookie(
+            name = cookieName(tableId),
+            value = token,
+            path = "/",
+            httpOnly = true,
+            secure = secureCookies,
+            extensions = mapOf("SameSite" to "Lax"),
+        )
+
+    /** A same-attribute empty cookie that expires [tableId]'s session immediately (leave / stale prune). */
+    fun expiredSessionCookie(tableId: Int): Cookie =
+        Cookie(
+            name = cookieName(tableId),
+            value = "",
+            path = "/",
+            httpOnly = true,
+            secure = secureCookies,
+            maxAge = 0,
+            extensions = mapOf("SameSite" to "Lax"),
+        )
 
     companion object {
         /** Prefix for every per-table session cookie. Enumerated by the "my tables" discovery endpoint. */

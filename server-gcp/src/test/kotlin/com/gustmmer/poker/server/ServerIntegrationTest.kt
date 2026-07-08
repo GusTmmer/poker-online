@@ -717,6 +717,34 @@ class ServerIntegrationTest {
         assertTrue(setCookie.contains("poker_table_999999")) { "stale cookie should be cleared" }
     }
 
+    @Test
+    fun `session cookie is HttpOnly and SameSite=Lax, and Secure only when configured`() = testApplication {
+        // Default config (secureCookies=false, dev over http): HttpOnly + SameSite=Lax, but not Secure.
+        // Raw client (no HttpCookies plugin) so the Set-Cookie header is readable verbatim.
+        configureTestApp()
+        val rawClient = createClient { install(ContentNegotiation) { json() } }
+        // Lowercase so casing doesn't matter; match attributes with their "; " delimiter so a base64
+        // substring inside the JWT value can't accidentally satisfy the check.
+        val insecure = rawClient.post("/api/tables") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Alice"}""")
+        }.headers[HttpHeaders.SetCookie].orEmpty().lowercase()
+        assertTrue(insecure.contains("; httponly")) { "expected HttpOnly in: $insecure" }
+        assertTrue(insecure.contains("; samesite=lax")) { "expected SameSite=Lax in: $insecure" }
+        assertFalse(insecure.contains("; secure")) { "dev cookie must not be Secure: $insecure" }
+    }
+
+    @Test
+    fun `session cookie is marked Secure when secureCookies is enabled`() = testApplication {
+        // Production posture (Cloud Run is HTTPS): the same cookie gains the Secure attribute.
+        configureTestApp(testConfig.copy(secureCookies = true))
+        val rawClient = createClient { install(ContentNegotiation) { json() } }
+        val secure = rawClient.post("/api/tables") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Alice"}""")
+        }.headers[HttpHeaders.SetCookie].orEmpty().lowercase()
+        assertTrue(secure.contains("; secure")) { "expected Secure in: $secure" }
+        assertTrue(secure.contains("; samesite=lax")) { "expected SameSite=Lax in: $secure" }
+    }
+
     private suspend fun foldUntilRoundEnds(clients: List<HttpClient>, tableId: Int) {
         var safety = 20
         while (safety-- > 0) {

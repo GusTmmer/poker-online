@@ -129,6 +129,7 @@ e2e/
 | `ALLOWED_ORIGIN` | `*` | CORS origin. `*` is dev-only (credentialed cross-origin requests fail); set a concrete origin in production to enable the JWT cookie cross-origin. With the SPA served same-origin (`STATIC_DIR`), CORS is moot. |
 | `STATIC_DIR` | _(unset)_ | Directory of built frontend assets to serve at `/` (same-origin). Unset in dev (Vite proxy). The Docker image sets it to the bundled SPA. |
 | `INTERNAL_TOKEN` | `dev-internal-token` | Shared secret guarding the `/internal/*` endpoints Cloud Tasks calls back. Secret Manager in prod. |
+| `SECURE_COOKIES` | `false` | Marks session cookies `Secure` (HTTPS-only). The Docker image sets it `true` (Cloud Run is HTTPS); keep it false for local `http://localhost` dev so the cookie is still sent. |
 | `SERVICE_URL` | _(required in prod)_ | This service's own public URL — the target Cloud Tasks POSTs timer/vote callbacks to. |
 | `CLOUD_TASKS_LOCATION` / `CLOUD_TASKS_QUEUE` | `us-central1` / `poker-timers` | Cloud Tasks queue for durable timers. |
 | `VOTE_TIMEOUT_SECONDS` | `60` | How long a vote stays open before its Cloud Task auto-closes it. |

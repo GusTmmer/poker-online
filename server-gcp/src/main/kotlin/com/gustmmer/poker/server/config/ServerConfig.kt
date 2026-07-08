@@ -31,6 +31,11 @@ data class ServerConfig(
      * secret in production (Secret Manager).
      */
     val internalToken: String = DEFAULT_INTERNAL_TOKEN,
+    /**
+     * Mark session cookies `Secure` (HTTPS-only). Must be true in production (Cloud Run is HTTPS);
+     * defaults to false so local dev over `http://localhost` still receives and returns the cookie.
+     */
+    val secureCookies: Boolean = false,
 ) {
     /**
      * Refuse to run with the insecure dev defaults. Called from the production entry point only —
@@ -58,6 +63,7 @@ data class ServerConfig(
             rateLimitReadRefillSeconds = System.getenv("RATE_LIMIT_READ_REFILL_SECONDS")?.toLongOrNull() ?: 60,
             staticDir = System.getenv("STATIC_DIR")?.takeIf { it.isNotBlank() },
             internalToken = System.getenv("INTERNAL_TOKEN") ?: DEFAULT_INTERNAL_TOKEN,
+            secureCookies = System.getenv("SECURE_COOKIES")?.toBooleanStrictOrNull() ?: false,
         )
     }
 }

@@ -89,14 +89,7 @@ fun Application.configureTableRoutes(
                 val created = gameService.createTable(request)
 
                 val token = jwtService.createToken(created.tableId, created.playerId)
-                call.response.cookies.append(
-                    Cookie(
-                        name = jwtService.cookieName(created.tableId),
-                        value = token,
-                        path = "/",
-                        httpOnly = true,
-                    )
-                )
+                call.response.cookies.append(jwtService.sessionCookie(created.tableId, token))
 
                 call.respond(
                     HttpStatusCode.Created,
@@ -123,14 +116,7 @@ fun Application.configureTableRoutes(
 
                 if (result is ServiceResult.Ok) {
                     val token = jwtService.createToken(tableId, result.value.playerId)
-                    call.response.cookies.append(
-                        Cookie(
-                            name = jwtService.cookieName(tableId),
-                            value = token,
-                            path = "/",
-                            httpOnly = true,
-                        )
-                    )
+                    call.response.cookies.append(jwtService.sessionCookie(tableId, token))
                 }
 
                 call.respond(result)
@@ -151,15 +137,7 @@ fun Application.configureTableRoutes(
                     gameService.getTableSummary(session.tableId, session.playerId)
                         ?: run {
                             // Stale session — expire the cookie so it stops riding along on every request.
-                            call.response.cookies.append(
-                                Cookie(
-                                    name = jwtService.cookieName(session.tableId),
-                                    value = "",
-                                    path = "/",
-                                    httpOnly = true,
-                                    maxAge = 0,
-                                )
-                            )
+                            call.response.cookies.append(jwtService.expiredSessionCookie(session.tableId))
                             null
                         }
                 }
@@ -184,15 +162,7 @@ fun Application.configureTableRoutes(
                 ?: return@delete call.respondUnauthorized()
 
             val result = gameService.leaveTable(tableId, session.playerId)
-            call.response.cookies.append(
-                Cookie(
-                    name = jwtService.cookieName(tableId),
-                    value = "",
-                    path = "/",
-                    httpOnly = true,
-                    maxAge = 0,
-                )
-            )
+            call.response.cookies.append(jwtService.expiredSessionCookie(tableId))
             call.respond(result)
         }
 

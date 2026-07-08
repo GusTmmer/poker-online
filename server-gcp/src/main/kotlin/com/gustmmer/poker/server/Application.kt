@@ -71,7 +71,7 @@ fun Application.configureServer(
 ) {
     configurePlugins(config)
 
-    val jwtService = JwtService(config.jwtSecret)
+    val jwtService = JwtService(config.jwtSecret, config.secureCookies)
     val connectionManager = TableConnectionManager(bus)
     val timerManager = TurnTimerManager(persistence, scheduler)
     // In-process schedulers fire through this handler; Cloud Tasks ignores it and uses the route below.

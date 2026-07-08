@@ -20,6 +20,8 @@ COPY --from=build /app/server-gcp/build/install/server-gcp ./
 # Serve the built SPA same-origin with the API (no CORS, no cross-site cookie).
 COPY --from=frontend /app/frontend/dist ./static
 ENV STATIC_DIR=/app/static
+# Cloud Run terminates HTTPS, so session cookies can be Secure in this image.
+ENV SECURE_COOKIES=true
 
 EXPOSE 8080
 
