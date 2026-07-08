@@ -15,7 +15,7 @@ import {
 } from './drawCard'
 import {
   DECK_DELAY_MS, SLIDE_MS, FLIP_PAUSE_MS, FLIP_STAGGER_MS, FLIP_HALF_MS, DECK_LINGER_MS,
-  MINI_SCALE, DEAL_INTERVAL_MS, DEAL_FLIGHT_MS, HALF_SPACING,
+  MINI_SCALE, DEAL_INTERVAL_MS, DEAL_FLIGHT_MS, HALF_SPACING, FOLD_MUCK_MS,
   COMM_SCALE, COMM_GAP, commRowW,
 } from './constants'
 import type { SceneState } from './sceneTypes'
@@ -386,6 +386,25 @@ function handleEvent(scene: SceneState, event: GameEvent) {
     case 'chips_changed': {
       const pos = seatPos(scene, event.playerId)
       spawnDelta(scene, pos.x, pos.y, event.delta)
+      break
+    }
+
+    case 'player_folded': {
+      // Muck: glide the folder's mini cards to table center while fading. Take over
+      // any in-flight fade that refreshSeats just started (it would otherwise hide
+      // the cards mid-flight), and restore their home position/state on completion
+      // so the next deal reveals them where they belong.
+      const entry = scene.seats.get(event.playerId)
+      if (!entry || !entry.miniCards.visible) break
+      const cards = entry.miniCards
+      const homeX = cards.x, homeY = cards.y
+      const rec = cards as unknown as Record<string, number>
+      scene.tweens = scene.tweens.filter((t) => t.target !== rec)
+      entry.miniCardsVisible = false
+      tween(scene, cards, { x: 0, y: 0, alpha: 0 }, FOLD_MUCK_MS, 0, () => {
+        if (!entry.miniCardsVisible) { cards.visible = false; cards.alpha = 0 }
+        cards.position.set(homeX, homeY)
+      })
       break
     }
 

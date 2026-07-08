@@ -21,6 +21,8 @@ export type GameEvent =
   | { kind: 'community_revealed'; added: string[]; total: number }
   /** A player's committed bet grew — triggers a chip flying to the pot. */
   | { kind: 'player_bet'; playerId: number; amount: number }
+  /** A player folded mid-hand — triggers their cards flying to the muck (center). */
+  | { kind: 'player_folded'; playerId: number }
   /** The acting player changed (or became none). */
   | { kind: 'turn_changed'; playerId: number | null }
   /** The pot total changed. */

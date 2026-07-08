@@ -61,6 +61,8 @@ export function updateSeats(
 
     const flipLabels = seatPosition.y < -10
 
+    const cardPos = slotPosition(slot, mySlot, seatCount, CARD_STADIUM)
+
     let entry = scene.seats.get(player.id)
     if (!entry) {
       const seatObj = buildSeat(player, isMe, flipLabels)
@@ -70,7 +72,6 @@ export function updateSeats(
       const miniCards = makeMiniCardBackPair()
       miniCards.pivot.set(PAIR_W / 2, CARD_H / 2)
       miniCards.scale.set(MINI_SCALE)
-      const cardPos = slotPosition(slot, mySlot, seatCount, CARD_STADIUM)
       miniCards.position.set(cardPos.x, cardPos.y)
       miniCards.rotation = (cardPos.angleDeg - 90) * Math.PI / 180
       miniCards.visible = false
@@ -94,6 +95,9 @@ export function updateSeats(
     if (showMini !== entry.miniCardsVisible) {
       entry.miniCardsVisible = showMini
       if (showMini) {
+        // Reset to home position — a prior fold animation may have parked the
+        // cards mid-flight toward the muck.
+        entry.miniCards.position.set(cardPos.x, cardPos.y)
         entry.miniCards.visible = true
         entry.miniCards.alpha = 0
         tween(scene, entry.miniCards, { alpha: 1 }, 400)

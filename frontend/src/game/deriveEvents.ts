@@ -65,6 +65,19 @@ export function deriveEvents(
     }
   }
 
+  // A player who was in the hand is no longer active while the hand continues →
+  // they folded. Restricted to an ongoing betting round so it never fires on the
+  // showdown/round-end reset (where everyone leaves the hand at once); a fold that
+  // ends the hand is presented by the pot award instead.
+  if (next.roundStage != null && next.roundStage !== 'SHOWDOWN') {
+    const prevActive = new Map(prev.players.map((p) => [p.id, p.isActive]))
+    for (const p of next.players) {
+      if (prevActive.get(p.id) === true && !p.isActive) {
+        events.push({ kind: 'player_folded', playerId: p.id })
+      }
+    }
+  }
+
   if (prev.potTotal !== next.potTotal) {
     events.push({ kind: 'pot_changed', from: prev.potTotal, to: next.potTotal })
   }

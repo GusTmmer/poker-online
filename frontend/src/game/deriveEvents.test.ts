@@ -130,6 +130,29 @@ describe('deriveEvents', () => {
     expect(evt).toEqual({ kind: 'pot_awarded', winners: [{ playerId: 1, delta: 200 }] })
   })
 
+  it('emits player_folded when a player leaves the hand mid-round', () => {
+    const prev = state({ roundStage: 'BET_FLOP', players: [player({ id: 1, isActive: true }), player({ id: 2 })] })
+    const next = state({ roundStage: 'BET_FLOP', players: [player({ id: 1, isActive: false }), player({ id: 2 })] })
+    const evt = deriveEvents(prev, next, createDeriveContext()).find((e) => e.kind === 'player_folded')
+    expect(evt).toEqual({ kind: 'player_folded', playerId: 1 })
+  })
+
+  it('does not emit player_folded at showdown or round-end reset', () => {
+    const toShowdown = deriveEvents(
+      state({ roundStage: 'BET_RIVER', players: [player({ id: 1, isActive: true }), player({ id: 2 })] }),
+      state({ roundStage: 'SHOWDOWN', players: [player({ id: 1, isActive: false }), player({ id: 2 })] }),
+      createDeriveContext(),
+    )
+    expect(kinds(toShowdown)).not.toContain('player_folded')
+
+    const toReset = deriveEvents(
+      state({ roundStage: 'BET_RIVER', players: [player({ id: 1, isActive: true }), player({ id: 2 })] }),
+      state({ roundStage: null, players: [player({ id: 1, isActive: false }), player({ id: 2 })] }),
+      createDeriveContext(),
+    )
+    expect(kinds(toReset)).not.toContain('player_folded')
+  })
+
   it('emits pause/resume transitions', () => {
     const running = state({ gameStatus: 'RUNNING' })
     const paused = state({ gameStatus: 'PAUSED' })

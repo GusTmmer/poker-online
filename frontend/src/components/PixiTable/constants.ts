@@ -16,6 +16,10 @@ export const DEAL_INTERVAL_MS = 420
 export const DEAL_FLIGHT_MS   = 320
 export const HALF_SPACING     = (CARD_W + CARD_GAP) / 2 * MINI_SCALE
 
+// ─── fold animation ────────────────────────────────────────────────────────────
+// A folding player's mini cards glide to the muck (table center) while fading.
+export const FOLD_MUCK_MS     = 550
+
 // ─── community card row ───────────────────────────────────────────────────────
 export const COMM_SCALE = 0.72   // scale down community cards so they don't crowd the pot
 export const COMM_GAP   = 6
