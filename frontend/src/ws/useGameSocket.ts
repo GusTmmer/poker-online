@@ -92,6 +92,7 @@ export function useGameSocket(tableId: number): GameSocket {
                 try {
                     frame = JSON.parse(event.data) as WsFrame
                 } catch {
+                    console.warn('[ws] dropping unparseable frame', event.data)
                     return
                 }
 
