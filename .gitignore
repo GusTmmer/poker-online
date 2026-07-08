@@ -67,6 +67,9 @@ replay_pid*
 ### Local scratch / debugging artifacts ###
 # Playwright MCP output (console/page dumps, screenshots)
 .playwright-mcp/
+# Playwright run output when invoked from the repo root (frontend/.gitignore
+# only covers e2e/test-results relative to the frontend dir)
+/test-results/
 # Ad-hoc screenshots dropped at the repo root (anchored so it won't
 # catch frontend assets or e2e snapshot baselines)
 /*.png

@@ -1,0 +1,53 @@
+name: CI
+
+# Gate every push and PR on a green build. The frontend job runs `tsc -b`
+# (type-check) before the Vite build — the check that would have caught the
+# missing-field regression that previously slipped into a commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Kotlin/JVM 21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build & test
+        run: ./gradlew build --no-daemon
+
+  frontend:
+    name: Frontend (type-check, lint, unit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Type-check & build
+        run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      # Advisory for now: main has a handful of pre-existing lint errors
+      # (setState-in-effect in TurnTimer/SessionContext, a react-refresh export
+      # warning). Flip this to blocking once those are cleared.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
