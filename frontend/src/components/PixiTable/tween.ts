@@ -26,6 +26,11 @@ export function tween(
     scene.tweens.push({target: t, props, startProps, elapsed: 0, duration, delay, ease: 'easeOut', onDone, done: false})
 }
 
+/** Drop any in-flight tweens targeting [target] (by identity) so a new tween can cleanly take over. */
+export function cancelTweens(scene: SceneState, target: object) {
+    scene.tweens = scene.tweens.filter((tw) => tw.target !== target)
+}
+
 export function tickTweens(scene: SceneState, dt: number) {
     for (const tw of scene.tweens) {
         if (tw.done) continue

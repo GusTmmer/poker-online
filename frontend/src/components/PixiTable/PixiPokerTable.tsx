@@ -21,7 +21,7 @@ import {
 import type { SceneState } from './sceneTypes'
 import { randomPotVariant, updatePot } from './pot'
 import { spawnDelta, spawnFlyingChip, spawnWinnerChips } from './chips'
-import { tween } from './tween'
+import { tween, cancelTweens } from './tween'
 import { getSlotMap, refreshSeats, seatPos } from './seats'
 import { tick } from './tick'
 
@@ -398,8 +398,7 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       if (!entry || !entry.miniCards.visible) break
       const cards = entry.miniCards
       const homeX = cards.x, homeY = cards.y
-      const rec = cards as unknown as Record<string, number>
-      scene.tweens = scene.tweens.filter((t) => t.target !== rec)
+      cancelTweens(scene, cards)
       entry.miniCardsVisible = false
       tween(scene, cards, { x: 0, y: 0, alpha: 0 }, FOLD_MUCK_MS, 0, () => {
         if (!entry.miniCardsVisible) { cards.visible = false; cards.alpha = 0 }
