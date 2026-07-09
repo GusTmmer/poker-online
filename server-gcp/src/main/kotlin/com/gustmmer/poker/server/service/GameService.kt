@@ -157,16 +157,36 @@ class GameService(
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid game state")
             }
 
-            val newRound = table.currentState.roundState
-            if (newRound != null && !newRound.pokerRoundStage.isBettingRound()) {
-                // Round ended (SHOWDOWN or preemptive) — transition to WAITING for ready-up.
-                table.clearRoundState()
-            }
+            // NOTE: if this action ended the hand, the SHOWDOWN state is committed and fanned out here
+            // on its own. Clearing to WAITING is a *separate* commit (see endRoundIfOver below) so the
+            // showdown reveal reaches clients as a distinct frame — folding it into this block would
+            // overwrite the reveal in memory before it is ever broadcast (the whole block is one commit).
             ServiceResult.Ok(mapOf("status" to "ok"))
         }
 
-        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        if (result is ServiceResult.Ok) {
+            endRoundIfOver(tableId)
+            advanceTimer(tableId)
+        }
         return result
+    }
+
+    /**
+     * If the hand has ended (round reached SHOWDOWN or was preemptively resolved), transition to
+     * WAITING for ready-up in a commit *separate* from the action that ended it — the showdown reveal
+     * must fan out on its own frame first ([TableConnectionManager] only reveals pocket cards while the
+     * round is in SHOWDOWN). Guarded and re-checked inside the transaction: if a betting round is live
+     * (e.g. a start-round raced into the gap and dealt a fresh hand) nothing is staged, so no spurious
+     * write or broadcast, and a freshly dealt round is never clobbered.
+     */
+    private suspend fun endRoundIfOver(tableId: Int) {
+        withTable(tableId, persistence) { table ->
+            val round = table.currentState.roundState
+            if (round != null && !round.pokerRoundStage.isBettingRound()) {
+                table.clearRoundState()
+            }
+            ServiceResult.Ok(Unit)
+        }
     }
 
     /**

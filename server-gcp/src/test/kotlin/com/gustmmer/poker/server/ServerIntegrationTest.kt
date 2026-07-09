@@ -13,6 +13,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.testing.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
@@ -277,6 +278,89 @@ class ServerIntegrationTest {
                     val obj = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
                     if (obj["roundStage"]?.jsonPrimitive?.contentOrNull != null) break // round is live → fan-out worked
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `a manually-acted showdown fans out a SHOWDOWN frame revealing every participant's cards`() = testApplication {
+        // Regression: the action that ends a hand used to clear the round to WAITING inside the SAME
+        // withTable block that produced the SHOWDOWN state. Since a block commits (and fans out) only
+        // once, the reveal was overwritten in memory before any client ever saw it — clients jumped
+        // straight from the last betting stage to "no round", so pocket cards were never shown. The fix
+        // commits the SHOWDOWN reveal on its own frame, then clears to WAITING in a separate commit.
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","startingChips":1000,"turnTimerSeconds":300,"maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        fun player() = createClient {
+            install(ContentNegotiation) { json() }
+            install(HttpCookies)
+            install(WebSockets)
+        }
+        val bob = player()
+        val charlie = player()
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Bob"}""")
+        }
+        charlie.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Charlie"}""")
+        }
+        // Bob is player 1 — he observes the game over a socket while all three play the hand out.
+        val bobId = 1
+
+        bob.webSocket("/ws/tables/$tableId") {
+            // A background reader drains every frame so the server's sends never block, and so we keep
+            // the full history (the SHOWDOWN frame is transient — the very next commit clears the round).
+            val frames = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
+            val reader = launch {
+                runCatching {
+                    for (frame in incoming) if (frame is Frame.Text) {
+                        frames += Json.parseToJsonElement(frame.readText()).jsonObject
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, alice.post("/api/tables/$tableId/start-round").status)
+
+            // Everyone just calls/checks: no folds, no raises, no all-ins — so the hand runs all the way
+            // to a river showdown with all three still in and none busted (every player keeps chips, so
+            // none is eliminated and every participant's cards are eligible to be revealed).
+            callDownUntilRoundEnds(listOf(alice, bob, charlie), tableId)
+
+            val showdown = withTimeout(5000) {
+                var frame: JsonObject? = null
+                while (frame == null) {
+                    frame = frames.lastOrNull { it["roundStage"]?.jsonPrimitive?.contentOrNull == "SHOWDOWN" }
+                    if (frame == null) delay(25)
+                }
+                frame
+            }
+            reader.cancel()
+
+            // In the SHOWDOWN frame Bob observes, both OTHER participants' pocket cards are revealed
+            // (2 cards each) and their evaluated best hand is attached.
+            val others = showdown["players"]!!.jsonArray
+                .map { it.jsonObject }
+                .filter { it["id"]!!.jsonPrimitive.int != bobId }
+            assertEquals(2, others.size)
+            others.forEach { p ->
+                val pocket = p["pocketCards"]?.jsonArray
+                assertNotNull(pocket, "expected player ${p["id"]} pocket cards revealed at showdown")
+                assertEquals(2, pocket!!.size)
+                assertNotNull(p["bestHand"]?.jsonObject, "expected player ${p["id"]} best hand at showdown")
+            }
+
+            // And the round still transitions to WAITING afterwards (the clear is a separate commit).
+            withTimeout(5000) {
+                while (frames.none {
+                        it["roundStage"]?.jsonPrimitive?.contentOrNull == null &&
+                            it["gameStatus"]?.jsonPrimitive?.contentOrNull == "WAITING"
+                    }) delay(25)
             }
         }
     }
@@ -753,6 +837,29 @@ class ServerIntegrationTest {
                 val resp = c.post("/api/tables/$tableId/action") {
                     contentType(ContentType.Application.Json)
                     setBody("""{"type":"FOLD"}""")
+                }
+                if (resp.status == HttpStatusCode.OK) {
+                    anyoneActed = true
+                    break
+                }
+            }
+            if (!anyoneActed) break
+        }
+    }
+
+    /**
+     * Round-robins a CALL from each client until the round ends. Nobody folds, raises, or goes all-in,
+     * so the hand checks/calls all the way through to a river showdown with every player still in. Like
+     * [foldUntilRoundEnds] it never needs to know whose turn it is — an out-of-turn CALL just 400s.
+     */
+    private suspend fun callDownUntilRoundEnds(clients: List<HttpClient>, tableId: Int) {
+        var safety = 40
+        while (safety-- > 0) {
+            var anyoneActed = false
+            for (c in clients) {
+                val resp = c.post("/api/tables/$tableId/action") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"type":"CALL"}""")
                 }
                 if (resp.status == HttpStatusCode.OK) {
                     anyoneActed = true
