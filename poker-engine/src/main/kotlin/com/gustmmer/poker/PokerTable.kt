@@ -116,12 +116,11 @@ class PokerTable(
 
         state = state.copy(roundState = newRoundState)
 
-        // Only check eliminations after showdown, when the pot has been fully distributed.
-        // Calling this mid-round (e.g. after an all-in) would mark players as ELIMINATED
-        // before the showdown returns their winnings.
-        if (newRoundState.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
-            checkForEliminations()
-        }
+        // Eliminations are deferred to clearRoundState (the WAITING transition), NOT applied here.
+        // setAsEliminated() folds the player (roundStatus = FOLDED), which would make a busted all-in
+        // player look folded to the showdown reveal and hide their cards — yet they were part of the
+        // showdown. Keeping them ACTIVE through the SHOWDOWN commit lets their hand be revealed; the
+        // bust is realised one commit later when the hand closes.
         dirty = true
     }
 
@@ -266,6 +265,11 @@ class PokerTable(
     }
 
     fun clearRoundState() {
+        // The hand is over and the pot fully distributed — now realise busts. Deferred to here (rather
+        // than the SHOWDOWN commit) so the showdown reveal can still show a busted all-in player's cards
+        // before they are folded out by elimination. Runs before forNextHand so eliminated players are
+        // dropped from the next hand's ordering. Idempotent: already-eliminated players are skipped.
+        checkForEliminations()
         val nextPlayers = state.players.participating()
         if (nextPlayers.isNotEmpty()) {
             playerOrdering = playerOrdering.forNextHand(nextPlayers)

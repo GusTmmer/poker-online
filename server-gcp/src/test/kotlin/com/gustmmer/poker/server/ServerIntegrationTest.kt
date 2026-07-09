@@ -366,6 +366,94 @@ class ServerIntegrationTest {
     }
 
     @Test
+    fun `an all-in showdown reveals even a busted player's cards`() = testApplication {
+        // Regression: eliminations used to be applied inside the SHOWDOWN commit. setAsEliminated()
+        // folds the player (roundStatus = FOLDED), so a busted all-in player looked folded to the
+        // reveal predicate (isShowdown && isActive) and their cards were hidden — even though they were
+        // in the showdown. Eliminations are now deferred to the WAITING transition, so the SHOWDOWN
+        // frame still shows every participant's cards; the bust surfaces one commit later.
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","startingChips":500,"turnTimerSeconds":300,"maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+
+        fun player() = createClient {
+            install(ContentNegotiation) { json() }
+            install(HttpCookies)
+            install(WebSockets)
+        }
+        val bob = player()
+        val charlie = player()
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Bob"}""")
+        }
+        charlie.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json); setBody("""{"playerName":"Charlie"}""")
+        }
+
+        bob.webSocket("/ws/tables/$tableId") {
+            val frames = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
+            val reader = launch {
+                runCatching {
+                    for (frame in incoming) if (frame is Frame.Text) {
+                        frames += Json.parseToJsonElement(frame.readText()).jsonObject
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, alice.post("/api/tables/$tableId/start-round").status)
+
+            // All three shove with equal stacks — none folds, so all three reach the showdown, and
+            // whoever loses the hand busts to 0 chips. The reveal must include the busted player(s).
+            allInUntilRoundEnds(listOf(alice, bob, charlie), tableId)
+
+            val showdown = withTimeout(5000) {
+                var frame: JsonObject? = null
+                while (frame == null) {
+                    frame = frames.lastOrNull { it["roundStage"]?.jsonPrimitive?.contentOrNull == "SHOWDOWN" }
+                    if (frame == null) delay(25)
+                }
+                frame
+            }
+            reader.cancel()
+
+            // Every one of the three players who reached the showdown has revealed cards — including any
+            // whose chips are now 0 (i.e. would be eliminated as the hand closes).
+            val players = showdown["players"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(3, players.size)
+            players.forEach { p ->
+                val pocket = p["pocketCards"]?.jsonArray
+                assertNotNull(pocket, "expected player ${p["id"]} pocket cards revealed at showdown")
+                assertEquals(2, pocket!!.size)
+            }
+            // The reveal happened while everyone was still ACTIVE — eliminations are deferred to WAITING.
+            assertTrue(
+                players.all { it["isActive"]!!.jsonPrimitive.boolean },
+                "no player should be eliminated/folded in the SHOWDOWN frame",
+            )
+
+            // The subsequent WAITING frame is where busts are realised: any 0-chip player is ELIMINATED.
+            val waiting = withTimeout(5000) {
+                var frame: JsonObject? = null
+                while (frame == null) {
+                    frame = frames.lastOrNull {
+                        it["roundStage"]?.jsonPrimitive?.contentOrNull == null &&
+                            it["gameStatus"]?.jsonPrimitive?.contentOrNull == "WAITING"
+                    }
+                    if (frame == null) delay(25)
+                }
+                frame
+            }
+            waiting["players"]!!.jsonArray.map { it.jsonObject }
+                .filter { it["chips"]!!.jsonPrimitive.int == 0 }
+                .forEach { assertEquals("ELIMINATED", it["status"]!!.jsonPrimitive.content) }
+        }
+    }
+
+    @Test
     fun `unauthenticated requests are rejected`() = testApplication {
         val client = configureTestApp()
 
@@ -860,6 +948,26 @@ class ServerIntegrationTest {
                 val resp = c.post("/api/tables/$tableId/action") {
                     contentType(ContentType.Application.Json)
                     setBody("""{"type":"CALL"}""")
+                }
+                if (resp.status == HttpStatusCode.OK) {
+                    anyoneActed = true
+                    break
+                }
+            }
+            if (!anyoneActed) break
+        }
+    }
+
+    /** Round-robins an ALL_IN from each client until the round ends. With equal stacks all players
+     *  shove and reach the showdown; the loser(s) bust to 0 chips. */
+    private suspend fun allInUntilRoundEnds(clients: List<HttpClient>, tableId: Int) {
+        var safety = 40
+        while (safety-- > 0) {
+            var anyoneActed = false
+            for (c in clients) {
+                val resp = c.post("/api/tables/$tableId/action") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"type":"ALL_IN"}""")
                 }
                 if (resp.status == HttpStatusCode.OK) {
                     anyoneActed = true

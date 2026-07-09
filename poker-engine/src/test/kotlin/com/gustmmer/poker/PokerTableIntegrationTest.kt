@@ -208,15 +208,24 @@ class PokerTableIntegrationTest {
             table.processPlayerCommand(AllIn(bettor.id))
         }
 
-        // After showdown, at least one player should have 0 chips (and be eliminated)
-        val losers = table.currentState.players.filter { it.chips == 0 }
-        losers.forEach { player ->
-            assertEquals(PlayerStatus.ELIMINATED, player.status,
-                "Player ${player.name} with 0 chips should be ELIMINATED")
+        // Total chips are conserved once the showdown resolves.
+        assertEquals(150, table.currentState.players.sumOf { it.chips })
+
+        // A busted player is NOT eliminated yet at showdown — elimination folds the player, which would
+        // hide their cards from the showdown reveal. They stay ACTIVE through the SHOWDOWN state so the
+        // hand can be shown; the bust is realised when the round is cleared. (Vacuous on a board-tie
+        // where everyone gets their chips back — no bust to observe.)
+        table.currentState.players.filter { it.chips == 0 }.forEach { player ->
+            assertTrue(player.isActive(),
+                "Player ${player.name} should still be active (not folded/eliminated) at showdown")
         }
 
-        // Total chips should be conserved
-        assertEquals(150, table.currentState.players.sumOf { it.chips })
+        // Clearing the round (the WAITING transition) realises the busts.
+        table.clearRoundState()
+        table.currentState.players.filter { it.chips == 0 }.forEach { player ->
+            assertEquals(PlayerStatus.ELIMINATED, player.status,
+                "Player ${player.name} with 0 chips should be ELIMINATED after the round is cleared")
+        }
     }
 
     @Test
