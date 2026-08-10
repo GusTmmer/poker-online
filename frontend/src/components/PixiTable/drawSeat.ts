@@ -103,9 +103,17 @@ function drawHaloShape(gfx: Graphics, size: number, color: number, scale: number
 
 // ─── mini card ────────────────────────────────────────────────────────────────
 
-function makeMiniCard(cardCode: string): Container {
+function makeMiniCard(cardCode: string, isPocket = false): Container {
   const c = new Container()
   const { rank, glyph, color } = parseCard(cardCode)
+
+  // Pocket cards get a thin gold ring 2px outside the card edge — a quiet
+  // "this one is theirs" marker among the five best-hand cards at showdown.
+  if (isPocket) {
+    const ring = new Graphics()
+    ring.roundRect(-2, -2, MINI_W + 4, MINI_H + 4, 5).stroke({ color: hex.gold, alpha: 0.85, width: 1.5 })
+    c.addChild(ring)
+  }
 
   const bg = new Graphics()
   bg.roundRect(0.5, 1, MINI_W, MINI_H, 3).fill({ color: 0x000000, alpha: 0.25 })
@@ -245,6 +253,7 @@ export function updateSeat(
   isReady: boolean,
   roundInProgress: boolean,
   showdownHand: PlayerView['bestHand'] | undefined,
+  showdownPocket: string[] | undefined,
   flipLabels: boolean,
 ) {
   s.isNextToAct = isNextToAct
@@ -338,10 +347,11 @@ export function updateSeat(
     nameT.anchor.set(0.5, 0)
     s.handSection.addChild(nameT)
 
+    const pocket = new Set(showdownPocket ?? [])
     const MINI_GAP = 3
     let cx = -(showdownHand.cards.length * (MINI_W + MINI_GAP) - MINI_GAP) / 2
     for (const card of showdownHand.cards) {
-      const mc = makeMiniCard(card)
+      const mc = makeMiniCard(card, pocket.has(card))
       mc.x = cx; mc.y = nameT.height + 3
       s.handSection.addChild(mc)
       cx += MINI_W + MINI_GAP

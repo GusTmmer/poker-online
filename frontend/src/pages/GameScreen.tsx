@@ -77,7 +77,15 @@ export function GameScreen() {
   return (
     <>
       <LeaveButton data-testid="btn-leave" aria-label="Leave table" title="Leave" onClick={() => navigate('/')}>
-        <span aria-hidden>↩</span>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden focusable="false">
+          <path
+            d="M9.5 3.5 5 8l4.5 4.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </LeaveButton>
       <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
       <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} />

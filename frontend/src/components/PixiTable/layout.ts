@@ -3,6 +3,11 @@
 export const LW = 800
 export const LH = 560
 
+// The scene is normally centred at (LW/2, LH/2). Nudge the whole scene up by
+// this many logical px so the bottom (local) player's showdown hand section —
+// which extends below their seat — clears the fixed ControlBar at the bottom.
+export const SCENE_Y_OFFSET = 40
+
 // Felt dimensions in logical units
 export const FELT_W = 480
 export const FELT_H = 230

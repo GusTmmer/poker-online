@@ -69,6 +69,10 @@ export interface SceneState {
   maxPlayers: number
   /** Best hands kept on the felt from showdown until the next deal. */
   retainedShowdownHands: Map<number, PlayerView['bestHand']>
+  /** Pocket cards per player captured at showdown — outlives the live snapshot's
+   *  pocketCards (which the server hides once the round clears) so the gold pocket
+   *  outline stays consistent while the retained hand is shown. */
+  retainedPocketCards: Map<number, string[]>
   /** Community cards currently rendered face-up — drives reveal vs. instant render. */
   shownCommunity: string[]
   winnerPlayerIds: Set<number>

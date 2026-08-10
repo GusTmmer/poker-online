@@ -44,6 +44,7 @@ export function updateSeats(
   myPlayerId: number,
   maxPlayers: number,
   showdownHands: Map<number, PlayerView['bestHand']>,
+  showdownPockets: Map<number, string[]>,
   winnerPlayerIds: Set<number>,
 ) {
   const { players, roundStage, nextPlayerIdToAct, readyPlayerIds } = gameState
@@ -87,7 +88,7 @@ export function updateSeats(
     updateSeat(
       entry.seatObj, player, isMe, isNextToAct, isWinner,
       readyPlayerIds.includes(player.id), roundInProgress,
-      showdownHands.get(player.id), flipLabels,
+      showdownHands.get(player.id), showdownPockets.get(player.id), flipLabels,
     )
 
     // Hide mini card backs at showdown — the hand section already renders the cards.
@@ -173,9 +174,20 @@ function currentShowdownHands(scene: SceneState): Map<number, PlayerView['bestHa
   return scene.retainedShowdownHands
 }
 
+/** Pocket cards to outline in the best-hand row: live at showdown, else retained. */
+function currentPocketCards(scene: SceneState): Map<number, string[]> {
+  const state = scene.lastApplied
+  if (state && state.roundStage === 'SHOWDOWN') {
+    const pockets = new Map<number, string[]>()
+    for (const p of state.players) if (p.pocketCards) pockets.set(p.id, p.pocketCards)
+    return pockets
+  }
+  return scene.retainedPocketCards
+}
+
 /** Re-render seats from the latest applied snapshot (used after animations settle). */
 export function refreshSeats(scene: SceneState) {
   if (!scene.lastApplied) return
   updateSeats(scene, scene.lastApplied, scene.myPlayerId, scene.maxPlayers,
-    currentShowdownHands(scene), scene.winnerPlayerIds)
+    currentShowdownHands(scene), currentPocketCards(scene), scene.winnerPlayerIds)
 }

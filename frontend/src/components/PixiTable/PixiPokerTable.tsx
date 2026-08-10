@@ -4,7 +4,7 @@ import type { GameStateUpdate } from '../../api/types'
 import type { GameEvent } from '../../game/events'
 import type { FrameBus } from '../../game/frameBus'
 import {
-  LW, LH,
+  LW, LH, SCENE_Y_OFFSET,
   CARD_STADIUM,
   slotPosition,
 } from './layout'
@@ -92,7 +92,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
       container.appendChild(canvas)
 
       const root = new Container()
-      root.position.set(LW / 2, LH / 2)
+      root.position.set(LW / 2, LH / 2 - SCENE_Y_OFFSET)
       app.stage.addChild(root)
 
       root.addChild(drawTable())
@@ -119,7 +119,8 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
         tweens: [],
         ticker, isDealing: false, isCommunityDealing: false,
         lastApplied: null, myPlayerId: myPlayerIdRef.current, maxPlayers: maxPlayersRef.current,
-        retainedShowdownHands: new Map(), shownCommunity: [], winnerPlayerIds: new Set(),
+        retainedShowdownHands: new Map(), retainedPocketCards: new Map(),
+        shownCommunity: [], winnerPlayerIds: new Set(),
         myCardsPocketKey: '', lastPotTotal: -1, lastRoundStage: undefined,
         potVariant: randomPotVariant(),
       }
@@ -369,6 +370,7 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       // Drop the previous hand's win presentation, then deal.
       scene.winnerPlayerIds.clear()
       scene.retainedShowdownHands.clear()
+      scene.retainedPocketCards.clear()
       startDeal(scene)
       refreshSeats(scene)
       break
@@ -410,6 +412,13 @@ function handleEvent(scene: SceneState, event: GameEvent) {
     case 'showdown':
       scene.retainedShowdownHands = new Map(
         Object.entries(event.hands).map(([id, hand]) => [Number(id), hand]),
+      )
+      // Capture revealed pocket cards now (the snapshot still has them) so the
+      // gold outline persists after the round clears and pocketCards go null.
+      scene.retainedPocketCards = new Map(
+        (scene.lastApplied?.players ?? [])
+          .filter((p) => p.pocketCards)
+          .map((p) => [p.id, p.pocketCards!]),
       )
       scene.winnerPlayerIds = new Set(event.winnerIds)
       refreshSeats(scene)  // green halos + hands on the same frame
