@@ -228,6 +228,26 @@ account isn't USD.)
 
 > Re-enabling after a trip: re-attach the billing account in the console (Billing → link account).
 
+## Known gap: CI/CD isn't wired up yet
+
+A Cloud Build trigger (`build-poker-server`) already exists, firing on push to `main` on the
+`GusTmmer/poker-online` GitHub repo, running as the `poker-build` SA — but it does **not** currently
+redeploy the live service. Two things are missing:
+
+1. It has no `cloudbuild.yaml`, so it runs in bare "autodetect" mode: build the `Dockerfile`, push with
+   an auto-generated tag. It does **not** push to
+   `us-central1-docker.pkg.dev/PROJECT_ID/poker/poker-server` (the path Cloud Run actually reads), and
+   has no step that calls `gcloud run deploy` at all.
+2. Its one real run failed outright on the same logs-bucket error described in §6/§8 above — nobody
+   had set `--default-buckets-behavior`/`logs_bucket` for it.
+
+To actually finish this: add a `cloudbuild.yaml` with explicit steps (build → push to the correct
+Artifact Registry path → `gcloud run deploy`), fix the trigger's logging config, and grant
+`poker-build` `roles/run.developer` + `roles/iam.serviceAccountUser` on `poker-run` (needed to deploy
+as that runtime SA) — a real permission expansion for that SA, worth doing deliberately rather than as
+a drive-by. Until then, ship a new build the way this deploy did it: §6's `gcloud builds submit` +
+`gcloud run services replace`.
+
 ## Gotchas hit on the real deploy
 
 These cost real time; read before you start rather than after you hit them.
