@@ -72,8 +72,15 @@ resource "google_cloudfunctions2_function" "killswitch" {
   }
 }
 
-# The $5 budget, wired to the topic. GCP grants the budget service agent publish rights on the topic
-# automatically when the budget is created with a pubsub_topic.
+# The billing account's own currency — required below. A budget's currency_code must match the
+# billing account (hardcoding "USD" fails outright, with no mention of currency, if the account is
+# billed in anything else; found the hard way running the real gcloud fallback against a BRL account).
+data "google_billing_account" "this" {
+  billing_account = var.billing_account
+}
+
+# The $5 (or local-currency-equivalent) budget, wired to the topic. GCP grants the budget service agent
+# publish rights on the topic automatically when the budget is created with a pubsub_topic.
 resource "google_billing_budget" "budget" {
   billing_account = var.billing_account
   display_name    = "poker-budget"
@@ -84,7 +91,7 @@ resource "google_billing_budget" "budget" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
+      currency_code = data.google_billing_account.this.currency_code
       units         = tostring(var.budget_amount)
     }
   }

@@ -52,7 +52,11 @@ variable "billing_account" {
 }
 
 variable "budget_amount" {
-  description = "Monthly budget in USD; the kill-switch disables billing when actual cost reaches it."
+  description = <<-EOT
+    Monthly budget, in the billing account's own currency (see `gcloud billing accounts describe
+    <id>` for its currencyCode — not necessarily USD). The kill-switch disables billing when actual
+    cost reaches it.
+  EOT
   type        = number
   default     = 5
 }

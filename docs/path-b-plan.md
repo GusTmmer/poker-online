@@ -1,12 +1,16 @@
 # Path B — Stateless, Cost-Bounded, Horizontally-Scalable Poker on Cloud Run
 
-> Status: **Phases 0–4 complete — Path B implemented end-to-end.** All shared coordination is off-instance
-> (fan-out via Firestore listeners; turn + vote timers via Cloud Tasks; votes in table state), `maxScale`
-> raised to 3 as a pure cost ceiling, and `MultiInstanceTest` proves cross-instance fan-out. The
-> Firestore-listener path runs in CI via **Testcontainers**; Cloud Tasks is GCP-only. **Phase 5** is the
-> real-GCP deployment (apply `infra/README.md`, set `SERVICE_URL`, verify on prod) — the one step that
-> needs a live project. For how the GCP services interact (with AWS analogies), see
-> [`architecture-gcp.md`](architecture-gcp.md).
+> Status: **Phases 0–5 complete — Path B implemented end-to-end and deployed.** All shared coordination
+> is off-instance (fan-out via Firestore listeners; turn + vote timers via Cloud Tasks; votes in table
+> state), `maxScale` raised to 3 as a pure cost ceiling, and `MultiInstanceTest` proves cross-instance
+> fan-out. Live at `https://poker-server-xz4wcwbsoq-uc.a.run.app` (project `pokeronline-499416`,
+> `us-central1`): Cloud Tasks turn timer verified round-tripping through `/internal/timer-expire` in
+> production, Firestore persistence verified via a real table create + reload, budget kill-switch
+> (Pub/Sub → gen2 Cloud Function → billing.admin on a dedicated SA) deployed and armed at R$25
+> (≈$5 USD — the billing account is BRL-denominated). The Firestore-listener path runs in CI via
+> **Testcontainers**; Cloud Tasks is GCP-only, verified live instead. For how the GCP services
+> interact (with AWS analogies), see [`architecture-gcp.md`](architecture-gcp.md); for the deploy
+> sequence and gotchas actually hit, see [`../infra/README.md`](../infra/README.md).
 > Supersedes the abandoned "Cloud LB + `HEADER_FIELD` session affinity on `X-Table-Id`" design
 > (Cloud Run instances are not addressable; affinity pins a *client* best-effort, never a *table*,
 > and a fronting LB costs ~$18/mo).
@@ -110,7 +114,7 @@ Redis, Serverless VPC connector.
   - ✅ Idle-socket reaping: client closes WS after 60s hidden, reconnects on foreground (`useGameSocket.ts`)
   - ✅ Blocking Firestore calls moved to `Dispatchers.IO` (`loadTable` / `withTable`)
   - ✅ Same-origin SPA hosting from the Cloud Run service (Ktor `singlePageApplication`, gated on `STATIC_DIR`; multi-stage Dockerfile builds + bundles the frontend) — verified locally
-  - ✅ `/healthz` readiness endpoint
+  - ✅ `/health` readiness endpoint (not `/healthz` — Cloud Run reserves that exact path for itself and never forwards it to the container; discovered during the Phase 5 deploy)
   - Remaining (needs a live project): apply `infra/README.md` steps; verify the Docker frontend bundling in a real `gcloud builds submit`.
 - **Phase 1 — Listener-driven fan-out** *(single instance, behavior-preserving)*: De-risks the hardest piece.
   - **1a ✅** Foundation: `TableUpdateBus` interface + `InMemoryTableUpdateBus` + `NotifyingPersistence`
@@ -165,12 +169,21 @@ Redis, Serverless VPC connector.
   (stand-in instances) over one shared bus + persistence with fake sockets and asserts a commit by anyone
   reaches sockets on *both* — the multi-instance design verified without real GCP. `CLAUDE.md` updated
   (deployment note, env table, architecture bullets, data flow).
-- **Phase 5 — Finalize** ☐ *(needs a live project)*: apply `infra/README.md`, two-step deploy to set
-  `SERVICE_URL`, configure Firestore TTL + budget kill-switch, confirm cross-instance behavior and $0 at
-  idle on prod.
+- **Phase 5 — Finalize** ✅: deployed to project `pokeronline-499416` following `infra/README.md`.
+  Foundation (Firestore + TTL, Artifact Registry, secrets, `poker-run`/`poker-build` service accounts)
+  was already in place from earlier manual setup; this phase built the image, deployed Cloud Run with
+  the real `SERVICE_URL`, created the `poker-timers` Cloud Tasks queue, and stood up the budget
+  kill-switch (dedicated `billing-killswitch` SA scoped to `billing.admin`, gen2 function, Pub/Sub
+  topic, R$25 budget matching the BRL-denominated billing account). Fixed one real bug found along the
+  way: the app's `/healthz` probe route never worked on Cloud Run because that exact path is reserved
+  by Cloud Run's own infrastructure and never reaches the container — renamed to `/health`
+  (`Application.kt`). Verified live: `/health` returns 200, a created table round-trips through
+  Firestore, and a turn timer's Cloud Tasks callback (`/internal/timer-expire`) landed with a 200 at
+  its scheduled time.
 
 Every phase is a deployed, working, cost-safe system; the multi-instance flip is a config change over
-code already proven on one instance.
+code already proven on one instance. Day-2 operations (shipping a new build, rotating secrets, reading
+the budget/kill-switch state) are in `infra/README.md`.
 
 ## 7. Risks & open questions
 

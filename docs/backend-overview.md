@@ -153,7 +153,7 @@ why a single in-process test can exercise the exact production fan-out path.
 | `VotingRoutes` | `/api/tables/{id}/voting-sessions/**` | Open a vote, cast a vote. |
 | `WebSocketRoutes` | `/ws/tables/{id}` | The real-time server→client push channel. |
 | `InternalRoutes` | `/internal/**` | Callbacks invoked by Cloud Tasks (not players); shared-secret guarded. |
-| `Application.configureStaticAndHealth` | `/healthz`, `/` | Liveness probe + optional same-origin SPA hosting. |
+| `Application.configureStaticAndHealth` | `/health`, `/` | Liveness probe + optional same-origin SPA hosting. `/health`, not `/healthz` — Cloud Run reserves the latter path for itself and never forwards it to the container. |
 
 **Typed routes (`ApiResources.kt`).** Every path is declared once as a
 `@Resource`-annotated class (e.g. `TableActionResource(val tableId: Int)`). Route

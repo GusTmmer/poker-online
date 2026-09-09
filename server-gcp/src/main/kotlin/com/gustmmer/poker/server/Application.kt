@@ -93,10 +93,14 @@ fun Application.configureServer(
  * is set the built SPA is served at `/` (with client-side-routing fallback), so the browser talks to
  * one origin for assets, REST, and WebSocket — no CORS, no cross-site cookie. Unset in dev/tests,
  * where the Vite proxy provides the same-origin illusion.
+ *
+ * The probe path is `/health`, not `/healthz`: Cloud Run's infrastructure intercepts the exact path
+ * `/healthz` for its own internal use and never forwards it to the container (a documented gotcha —
+ * requests to it 404 at the edge, before reaching this code at all).
  */
 fun Application.configureStaticAndHealth(config: ServerConfig) {
     routing {
-        get("/healthz") { call.respondText("ok") }
+        get("/health") { call.respondText("ok") }
 
         val dir = config.staticDir?.let(::File)?.takeIf { it.isDirectory }
         if (dir != null) {

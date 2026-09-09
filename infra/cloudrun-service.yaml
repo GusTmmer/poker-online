@@ -23,10 +23,11 @@ spec:
         run.googleapis.com/cpu-throttling: "true" # request-based billing (CPU only during requests)
         run.googleapis.com/startup-cpu-boost: "true"
     spec:
+      serviceAccountName: poker-run@pokeronline-499416.iam.gserviceaccount.com
       containerConcurrency: 250   # pack many WS connections onto one instance → fewer instances
       timeoutSeconds: 3600        # max WS lifetime before Cloud Run drops the request (client reconnects)
       containers:
-        - image: us-central1-docker.pkg.dev/PROJECT_ID/poker/poker-server:latest
+        - image: us-central1-docker.pkg.dev/pokeronline-499416/poker/poker-server:latest
           ports:
             - containerPort: 8080
           resources:
@@ -35,14 +36,14 @@ spec:
               memory: 512Mi   # bump to 1Gi only if the JVM OOMs on cold start
           env:
             - name: GCP_PROJECT_ID
-              value: PROJECT_ID
+              value: pokeronline-499416
             - name: ALLOWED_ORIGIN
               value: "*"   # same-origin (SPA served by this service) makes CORS moot; keep "*" or set the host
             # Cloud Tasks turn-timer callbacks (Phase 2): the queue POSTs back to this service's URL,
             # carrying INTERNAL_TOKEN as a header. SERVICE_URL is this service's own https URL — set it
             # after the first deploy assigns the URL (or to a mapped custom domain).
             - name: SERVICE_URL
-              value: https://REPLACE_WITH_SERVICE_URL
+              value: https://poker-server-xz4wcwbsoq-uc.a.run.app
             - name: CLOUD_TASKS_LOCATION
               value: us-central1
             - name: CLOUD_TASKS_QUEUE
