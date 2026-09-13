@@ -85,10 +85,13 @@ export function updateSeats(
     const isNextToAct = !scene.isDealing && !scene.isCommunityDealing && player.id === nextPlayerIdToAct
     const isWinner    = winnerPlayerIds.has(player.id)
 
+    // Pocket cards show beside a best hand, or on their own while an all-in runout tables them.
+    const hand = showdownHands.get(player.id)
+    const tabled = scene.runout != null && player.isActive
     updateSeat(
       entry.seatObj, player, isMe, isNextToAct, isWinner,
       readyPlayerIds.includes(player.id), roundInProgress,
-      showdownHands.get(player.id), showdownPockets.get(player.id), flipLabels,
+      hand, hand || tabled ? showdownPockets.get(player.id) : undefined, flipLabels,
     )
 
     // Hide mini card backs at showdown — the hand section already renders the cards.
@@ -165,6 +168,8 @@ function updateMyCards(
 // ─── showdown hands + refresh ─────────────────────────────────────────────────
 /** Best hands to show on seats: live at showdown, else whatever we retained from one. */
 function currentShowdownHands(scene: SceneState): Map<number, PlayerView['bestHand']> {
+  // Mid-runout the board isn't out yet: no hand names until the river lands.
+  if (scene.runout) return new Map()
   const state = scene.lastApplied
   if (state && state.roundStage === 'SHOWDOWN') {
     const hands = new Map<number, PlayerView['bestHand']>()

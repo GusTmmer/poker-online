@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Application, Container, Ticker } from 'pixi.js'
 import type { GameStateUpdate } from '../../api/types'
 import type { GameEvent } from '../../game/events'
-import type { FrameBus } from '../../game/frameBus'
+import type { Frame, FrameBus } from '../../game/frameBus'
 import {
   LW, LH, SCENE_Y_OFFSET,
   CARD_STADIUM,
@@ -21,6 +21,7 @@ import {
 import type { SceneState } from './sceneTypes'
 import { randomPotVariant, updatePot } from './pot'
 import { spawnDelta, spawnFlyingChip, spawnWinnerChips } from './chips'
+import { spawnActionBurst } from './burst'
 import { tween, cancelTweens } from './tween'
 import { getSlotMap, refreshSeats, seatPos } from './seats'
 import { tick } from './tick'
@@ -32,14 +33,21 @@ import { tick } from './tick'
 // handle-event dispatch.
 
 // ─── component ────────────────────────────────────────────────────────────────
-interface Props { bus: FrameBus; myPlayerId: number; maxPlayers: number }
+interface Props {
+  bus: FrameBus
+  myPlayerId: number
+  maxPlayers: number
+  /** Told when an all-in runout starts and finishes, so lobby controls can wait for the reveal. */
+  onRunoutChange?: (playing: boolean) => void
+}
 
-export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
+export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: Props) {
   const containerRef   = useRef<HTMLDivElement>(null)
   const sceneRef       = useRef<SceneState | null>(null)
   const myPlayerIdRef  = useRef<number>(myPlayerId)
   const maxPlayersRef  = useRef<number>(maxPlayers)
   const cleanupRef     = useRef<(() => void) | null>(null)
+  const onRunoutChangeRef = useRef(onRunoutChange)
 
   // Keep identity refs in sync so the Pixi init callback (created once) and the
   // bus subscription always read current values. Done in an effect — never during
@@ -47,6 +55,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
   useEffect(() => {
     myPlayerIdRef.current = myPlayerId
     maxPlayersRef.current = maxPlayers
+    onRunoutChangeRef.current = onRunoutChange
   })
 
   useEffect(() => {
@@ -116,7 +125,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
         communityRow, potContainer, myCardsContainer, animLayer,
         seats: new Map(), commCards: [], commDeck: null,
         flyingChips: [], winnerChips: [], floatingDeltas: [], dealCards: [],
-        tweens: [],
+        tweens: [], bursts: [], runout: null, dealEndsAt: 0,
         ticker, isDealing: false, isCommunityDealing: false,
         lastApplied: null, myPlayerId: myPlayerIdRef.current, maxPlayers: maxPlayersRef.current,
         retainedShowdownHands: new Map(), retainedPocketCards: new Map(),
@@ -138,12 +147,12 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers }: Props) {
         if (!s) return
         s.myPlayerId = myPlayerIdRef.current
         s.maxPlayers = maxPlayersRef.current
-        applySnapshot(s, frame.state, frame.cold)
-        if (!frame.cold) for (const event of frame.events) handleEvent(s, event)
+        processFrame(s, frame, (playing) => onRunoutChangeRef.current?.(playing))
       })
 
       cleanupRef.current = () => {
         unsubscribe()
+        if (scene.runout) scene.runout.timers.forEach(clearTimeout)
         window.removeEventListener('resize', onResize)
         ticker.stop(); ticker.destroy()
         canvas.remove()
@@ -316,6 +325,7 @@ function startDeal(scene: SceneState) {
   }
 
   const crossfadeAt = (ordered.length * 2 - 1) * DEAL_INTERVAL_MS + DEAL_FLIGHT_MS + 250
+  scene.dealEndsAt = performance.now() + crossfadeAt
   setTimeout(() => {
     for (const dc of scene.dealCards) {
       tween(scene, dc.sprite, { alpha: 0 }, 400, 0, () => scene.animLayer.removeChild(dc.sprite))
@@ -340,6 +350,115 @@ function startDeal(scene: SceneState) {
   }, crossfadeAt)
 }
 
+// ─── frame dispatch + all-in runout ─────────────────────────────────────────────
+// A call that puts the last chips in lands as ONE frame carrying the rest of the board,
+// the showdown and the payouts. Played as-is the hand is over before anyone sees the
+// cards come, so that frame is staged instead: the players' pocket cards are tabled,
+// then flop → turn → river are dealt with a beat after each, and only then are the
+// best hands, winners and payouts revealed. Frames arriving meanwhile (the round
+// clearing, the next hand) queue and replay in order afterwards.
+
+const RUNOUT_LEAD_MS = 700    // tabled cards on display before the first street
+const RUNOUT_PAUSE_MS = 1000  // beat after each street lands
+const STREET_ENDS = [3, 4, 5]
+
+/** Kinds held back until the board is out: they reveal the result. */
+const RESULT_EVENTS = new Set<GameEvent['kind']>(['community_revealed', 'showdown', 'pot_awarded', 'chips_changed'])
+
+type RunoutListener = (playing: boolean) => void
+
+function processFrame(scene: SceneState, frame: Frame, onRunout: RunoutListener) {
+  if (scene.runout) {
+    if (!frame.cold) { scene.runout.queued.push(frame); return }
+    // A reconnect snapshot supersedes the staged reveal.
+    abortRunout(scene, onRunout)
+  }
+
+  const streets = frame.cold ? [] : runoutStreets(scene, frame.state)
+  if (streets.length > 0) {
+    startRunout(scene, frame, streets, onRunout)
+    return
+  }
+
+  applySnapshot(scene, frame.state, frame.cold)
+  if (!frame.cold) for (const event of frame.events) handleEvent(scene, event)
+}
+
+/** Street boundaries still to deal when [state] jumps to showdown with undealt board cards. */
+function runoutStreets(scene: SceneState, state: GameStateUpdate): number[] {
+  if (state.roundStage !== 'SHOWDOWN' || scene.lastApplied?.roundStage === 'SHOWDOWN') return []
+  const shown = scene.shownCommunity.length
+  if (state.communityCards.length <= shown) return []
+  const contenders = state.players.filter((p) => p.isActive && p.pocketCards).length
+  if (contenders < 2) return []
+  return STREET_ENDS.filter((end) => end > shown && end <= state.communityCards.length)
+}
+
+function streetDealMs(cardCount: number) {
+  return DECK_DELAY_MS + SLIDE_MS + FLIP_PAUSE_MS + (cardCount - 1) * FLIP_STAGGER_MS + FLIP_HALF_MS * 2
+}
+
+function startRunout(scene: SceneState, frame: Frame, streets: number[], onRunout: RunoutListener) {
+  const prev = scene.lastApplied
+  const runout = { final: frame, queued: [] as Frame[], timers: [] as ReturnType<typeof setTimeout>[] }
+  scene.runout = runout
+  onRunout(true)
+
+  applySnapshot(scene, maskRunoutState(prev, frame.state, scene.shownCommunity), false)
+  for (const event of frame.events) if (!RESULT_EVENTS.has(event.kind)) handleEvent(scene, event)
+
+  const cards = frame.state.communityCards
+  let at = Math.max(RUNOUT_LEAD_MS, scene.isDealing ? scene.dealEndsAt - performance.now() + 400 : 0)
+  let dealt = scene.shownCommunity.length
+  for (const end of streets) {
+    const count = end - dealt
+    runout.timers.push(setTimeout(() => renderCommunity(scene, cards.slice(0, end), scene.shownCommunity), at))
+    at += streetDealMs(count) + RUNOUT_PAUSE_MS
+    dealt = end
+  }
+  runout.timers.push(setTimeout(() => finishRunout(scene, onRunout), at))
+}
+
+function finishRunout(scene: SceneState, onRunout: RunoutListener) {
+  const runout = scene.runout
+  if (!runout) return
+  scene.runout = null
+
+  applySnapshot(scene, runout.final.state, false)
+  for (const event of runout.final.events) {
+    if (RESULT_EVENTS.has(event.kind) && event.kind !== 'community_revealed') handleEvent(scene, event)
+  }
+  onRunout(false)
+  for (const frame of runout.queued) processFrame(scene, frame, onRunout)
+}
+
+function abortRunout(scene: SceneState, onRunout: RunoutListener) {
+  scene.runout?.timers.forEach(clearTimeout)
+  scene.runout = null
+  onRunout(false)
+}
+
+/**
+ * The showdown frame with its spoilers removed: the board as dealt so far, no best
+ * hands, and stacks as they stood before the payout (a stack that grew shows its
+ * pre-showdown size; the player whose call ended the betting shows it minus the call).
+ */
+function maskRunoutState(prev: GameStateUpdate | null, next: GameStateUpdate, shownCommunity: string[]): GameStateUpdate {
+  const called = prev ? Math.max(0, next.potTotal - prev.potTotal) : 0
+  const caller = prev?.nextPlayerIdToAct ?? null
+  return {
+    ...next,
+    communityCards: shownCommunity,
+    nextPlayerIdToAct: null,
+    players: next.players.map((p) => {
+      const before = prev?.players.find((q) => q.id === p.id)
+      if (!before) return { ...p, bestHand: null }
+      const preShowdown = p.id === caller ? Math.max(0, before.chips - called) : before.chips
+      return { ...p, chips: Math.min(preShowdown, p.chips), bestHand: null }
+    }),
+  }
+}
+
 // ─── apply snapshot (idempotent steady-state) ───────────────────────────────────
 // Renders "what things are": pot, community presence, seats, chip counts, halos.
 // Re-applying the same snapshot is a no-op; safe on reconnect. No diffing here —
@@ -351,8 +470,11 @@ function applySnapshot(scene: SceneState, state: GameStateUpdate, cold: boolean)
 
   // Community: clear on reset; render the whole row instantly on a cold frame
   // (reconnect / first paint). Warm additions arrive via 'community_revealed'.
+  // A finished showdown keeps its board on the felt beside the retained hands until
+  // the next deal ('round_started' clears it).
   if (state.communityCards.length === 0) {
-    if (scene.shownCommunity.length > 0) renderCommunity(scene, [], [])
+    const keepShowdownBoard = !cold && state.roundStage == null && scene.retainedShowdownHands.size > 0
+    if (scene.shownCommunity.length > 0 && !keepShowdownBoard) renderCommunity(scene, [], [])
   } else if (cold) {
     renderCommunity(scene, state.communityCards, state.communityCards)
   }
@@ -371,6 +493,7 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       scene.winnerPlayerIds.clear()
       scene.retainedShowdownHands.clear()
       scene.retainedPocketCards.clear()
+      if (scene.shownCommunity.length > 0) renderCommunity(scene, [], [])
       startDeal(scene)
       refreshSeats(scene)
       break
@@ -382,6 +505,19 @@ function handleEvent(scene: SceneState, event: GameEvent) {
     case 'player_bet': {
       const pos = seatPos(scene, event.playerId)
       spawnFlyingChip(scene, pos.x, pos.y)
+      break
+    }
+
+    case 'player_raised': {
+      const pos = seatPos(scene, event.playerId)
+      const verb = event.action === 'bet' ? 'Bet' : 'Raise'
+      spawnActionBurst(scene, pos.x, pos.y, `${verb} ${event.to.toLocaleString('en-US')}`, false)
+      break
+    }
+
+    case 'player_all_in': {
+      const pos = seatPos(scene, event.playerId)
+      spawnActionBurst(scene, pos.x, pos.y, 'ALL IN', true)
       break
     }
 

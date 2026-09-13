@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import styled from '@emotion/styled'
 import { useNavigate } from 'react-router-dom'
 import { useSession } from '../context/SessionContext'
@@ -69,6 +70,8 @@ export function GameScreen() {
   const { tableId, myPlayerId, tableInfo } = useSession()
   const { gameState, bus, connectionState, toasts, dismissToast } = useGameSocket(tableId)
   useStateLogger(gameState)
+  // True while the canvas plays an all-in runout; the next hand waits for the reveal.
+  const [revealing, setRevealing] = useState(false)
 
   if (!gameState || myPlayerId === null || !tableInfo) {
     return <Status>Connecting to table {tableId}… ({connectionState})</Status>
@@ -88,8 +91,8 @@ export function GameScreen() {
         </svg>
       </LeaveButton>
       <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
-      <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} />
-      <ControlBar gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} />
+      <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} onRunoutChange={setRevealing} />
+      <ControlBar gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} revealing={revealing} />
       <VotePopupLayer gameState={gameState} tableId={tableId} />
       <Toasts toasts={toasts} onDismiss={dismissToast} />
       {gameState.gameStatus === 'PAUSED' && (

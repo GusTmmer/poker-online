@@ -42,17 +42,26 @@ const Tab = styled.button<{ active: boolean }>`
   }
 `
 
-// Every create field sits on one 2-column grid with the same label style. Items align to the row's
-// bottom edge, so inputs in a row line up even when one label wraps to two lines.
+// Every create field sits on one 2-column grid with the same label style. Each field spans two
+// subgrid rows (label, input), so labels in a row share a top line and inputs share a row even
+// when one label wraps to two lines.
 const FieldGrid = styled.div`
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 0.75rem;
-  row-gap: 1.1rem;
-  align-items: end;
+  row-gap: 0.35rem;
 `
 
-const WideField = styled(FormLabel)`
+const Field = styled(FormLabel)`
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  gap: 0.35rem;
+  align-items: start;
+  margin-bottom: 0.75rem;
+`
+
+const WideField = styled(Field)`
   grid-column: 1 / -1;
 `
 
@@ -175,7 +184,7 @@ export function HomePage() {
                   maxLength={MAX_TABLE_NAME_LENGTH}
                 />
               </WideField>
-              <FormLabel>
+              <Field>
                 Max players
                 <FormInput
                   type="number"
@@ -184,8 +193,8 @@ export function HomePage() {
                   value={maxPlayers}
                   onChange={numericSetter(setMaxPlayers)}
                 />
-              </FormLabel>
-              <FormLabel>
+              </Field>
+              <Field>
                 Starting chips
                 <FormInput
                   type="number"
@@ -194,8 +203,8 @@ export function HomePage() {
                   value={startingChips}
                   onChange={numericSetter(setStartingChips)}
                 />
-              </FormLabel>
-              <FormLabel>
+              </Field>
+              <Field>
                 <span>
                   Big blind <Muted>(SB {Math.floor(bigBlind / 2)})</Muted>
                 </span>
@@ -208,8 +217,8 @@ export function HomePage() {
                   value={bigBlind}
                   onChange={numericSetter(setBigBlindOverride)}
                 />
-              </FormLabel>
-              <FormLabel>
+              </Field>
+              <Field>
                 Turn timer (s)
                 <FormInput
                   type="number"
@@ -218,8 +227,8 @@ export function HomePage() {
                   value={turnTimerSeconds}
                   onChange={numericSetter(setTurnTimerSeconds)}
                 />
-              </FormLabel>
-              <FormLabel>
+              </Field>
+              <Field>
                 <span>
                   Blinds up every <Muted>(orbits)</Muted>
                 </span>
@@ -230,8 +239,8 @@ export function HomePage() {
                   value={blindEscalationOrbits}
                   onChange={numericSetter(setBlindEscalationOrbits)}
                 />
-              </FormLabel>
-              <FormLabel>
+              </Field>
+              <Field>
                 Blind multiplier
                 <FormInput
                   type="number"
@@ -241,7 +250,7 @@ export function HomePage() {
                   value={blindEscalationMultiplier}
                   onChange={numericSetter(setBlindEscalationMultiplier)}
                 />
-              </FormLabel>
+              </Field>
             </FieldGrid>
           </>
         ) : (

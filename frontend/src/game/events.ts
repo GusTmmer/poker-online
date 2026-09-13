@@ -21,6 +21,10 @@ export type GameEvent =
   | { kind: 'community_revealed'; added: string[]; total: number }
   /** A player's committed bet grew — triggers a chip flying to the pot. */
   | { kind: 'player_bet'; playerId: number; amount: number }
+  /** A player opened the betting or raised it on this street — triggers a seat burst. */
+  | { kind: 'player_raised'; playerId: number; action: 'bet' | 'raise'; to: number }
+  /** A player put their whole stack in — triggers the loudest seat burst. */
+  | { kind: 'player_all_in'; playerId: number; to: number }
   /** A player folded mid-hand — triggers their cards flying to the muck (center). */
   | { kind: 'player_folded'; playerId: number }
   /** The acting player changed (or became none). */

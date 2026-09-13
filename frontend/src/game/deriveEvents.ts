@@ -30,8 +30,9 @@ export function deriveEvents(
     ctx.roundStartChips = chipMap(next)
   }
 
-  // New hand → deal animation.
-  if (prev.roundStage == null && next.roundStage === 'BET_BLINDS') {
+  // New hand → deal animation. Usually lands in BET_BLINDS, but short stacks can deal a hand
+  // that runs straight out to SHOWDOWN.
+  if (prev.roundStage == null && next.roundStage != null) {
     events.push({ kind: 'round_started' })
   }
 
@@ -48,6 +49,21 @@ export function deriveEvents(
       added: next.communityCards.slice(prev.communityCards.length),
       total: next.communityCards.length,
     })
+  }
+
+  // Aggression on the same street: a bet/raise lifts the table's highest bet; an all-in empties a
+  // stack. Never on the hand's first frame, where the blinds are posted rather than bet.
+  if (prev.roundStage != null && prev.roundStage === next.roundStage) {
+    const prevHighest = Math.max(0, ...prev.players.map((p) => p.currentBet))
+    const prevBetOf = new Map(prev.players.map((p) => [p.id, p.currentBet]))
+    for (const p of next.players) {
+      if (p.currentBet <= (prevBetOf.get(p.id) ?? 0)) continue
+      if (p.isActive && p.chips === 0) {
+        events.push({ kind: 'player_all_in', playerId: p.id, to: p.currentBet })
+      } else if (p.currentBet > prevHighest) {
+        events.push({ kind: 'player_raised', playerId: p.id, action: prevHighest === 0 ? 'bet' : 'raise', to: p.currentBet })
+      }
+    }
   }
 
   // Per-player bet increases → flying chip; mid-hand stack changes → delta.

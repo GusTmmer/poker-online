@@ -1,6 +1,8 @@
 import type { Application, Container, Text, Ticker } from 'pixi.js'
 import type { GameStateUpdate, PlayerView } from '../../api/types'
 import type { SeatObjects } from './drawSeat'
+import type { ActionBurst } from './burst'
+import type { Frame } from '../../game/frameBus'
 
 export interface SeatEntry {
   slot: number
@@ -42,6 +44,17 @@ export interface Tween {
   elapsed: number; duration: number; delay: number; ease: string; onDone?: () => void; done: boolean
 }
 
+/**
+ * An all-in runout being played street by street. The frame that reached SHOWDOWN is
+ * held in [final] (its winners and chip payouts would spoil the board), and any
+ * frames arriving meanwhile queue behind it.
+ */
+export interface Runout {
+  final: Frame
+  queued: Frame[]
+  timers: ReturnType<typeof setTimeout>[]
+}
+
 export interface SceneState {
   app: Application
   root: Container
@@ -60,6 +73,10 @@ export interface SceneState {
   floatingDeltas: FloatingDelta[]
   dealCards: DealCard[]
   tweens: Tween[]
+  bursts: ActionBurst[]
+  runout: Runout | null
+  /** performance.now() at which the current deal animation settles (0 when not dealing). */
+  dealEndsAt: number
   ticker: Ticker
   isDealing: boolean
   isCommunityDealing: boolean

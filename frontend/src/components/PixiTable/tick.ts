@@ -5,6 +5,7 @@ import {
 } from './constants'
 import { easeIn, easeOut, lerp, tickTweens } from './tween'
 import type { SceneState } from './sceneTypes'
+import { tickBursts } from './burst'
 
 // ─── tick ─────────────────────────────────────────────────────────────────────
 // The per-frame animation loop, driven by the Pixi Ticker. Steps every active
@@ -129,5 +130,6 @@ export function tick(scene: SceneState, dt: number) {
     }
   }
 
+  tickBursts(scene, dt)
   tickTweens(scene, dt)
 }

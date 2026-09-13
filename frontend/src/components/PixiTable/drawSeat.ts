@@ -132,6 +132,74 @@ function makeMiniCard(cardCode: string, isPocket = false): Container {
   return c
 }
 
+// ─── showdown hand row ────────────────────────────────────────────────────────
+
+const MINI_GAP = 3
+const DIVIDER_GAP = 7   // space either side of the pocket | board divider
+const WIDE_ROW_SCALE = 0.88
+
+/**
+ * Fills `section` with a player's showdown cards, centered at x = 0:
+ *
+ *     HAND NAME
+ *     [pocket₁ pocket₂] ┊ [board cards that complete the hand]
+ *
+ * Both pocket cards always sit on the left, so a player's own cards are visible
+ * even when the best five ignore them: a pocket card that plays gets the gold ring,
+ * one that doesn't is dimmed. Only the board cards the hand uses follow the
+ * divider, so no card is drawn twice and the row is 5–7 cards wide.
+ *
+ * With no hand yet (pocket cards tabled during an all-in runout) only the pair is
+ * shown. With no pocket cards known, the hand's five cards are shown as-is.
+ */
+function buildHandSection(section: Container, hand: PlayerView['bestHand'], pocketCards: string[] | null) {
+  let rowY = 0
+  if (hand) {
+    const nameT = new Text({ text: hand.name, style: STYLE_HAND_NAME })
+    nameT.anchor.set(0.5, 0)
+    section.addChild(nameT)
+    rowY = nameT.height + 3
+  }
+
+  const row = new Container()
+  row.y = rowY
+  section.addChild(row)
+
+  const inHand = new Set(hand?.cards ?? [])
+  const pocket = pocketCards ?? []
+  const board = hand ? hand.cards.filter((c) => !pocket.includes(c)) : []
+
+  let x = 0
+  const place = (card: Container) => {
+    card.x = x
+    row.addChild(card)
+    x += MINI_W + MINI_GAP
+  }
+
+  for (const card of pocket) {
+    const plays = hand != null && inHand.has(card)
+    const mc = makeMiniCard(card, plays)
+    if (hand && !plays) mc.alpha = 0.4
+    place(mc)
+  }
+
+  if (pocket.length > 0 && board.length > 0) {
+    x += DIVIDER_GAP - MINI_GAP
+    const divider = new Graphics()
+    divider.moveTo(0, 3).lineTo(0, MINI_H - 3).stroke({ color: hex.bronze, alpha: 0.9, width: 1 })
+    divider.x = x
+    row.addChild(divider)
+    x += DIVIDER_GAP
+  }
+
+  for (const card of board) place(makeMiniCard(card))
+
+  const width = x - MINI_GAP
+  const scale = pocket.length + board.length >= 7 ? WIDE_ROW_SCALE : 1
+  row.scale.set(scale)
+  row.x = (-width * scale) / 2
+}
+
 // ─── build ────────────────────────────────────────────────────────────────────
 
 /** Build all seat objects for one player. Root is centered at (0,0). */
@@ -342,20 +410,8 @@ export function updateSeat(
 
   // Showdown hand section
   s.handSection.removeChildren()
-  if (showdownHand) {
-    const nameT = new Text({ text: showdownHand.name, style: STYLE_HAND_NAME })
-    nameT.anchor.set(0.5, 0)
-    s.handSection.addChild(nameT)
-
-    const pocket = new Set(showdownPocket ?? [])
-    const MINI_GAP = 3
-    let cx = -(showdownHand.cards.length * (MINI_W + MINI_GAP) - MINI_GAP) / 2
-    for (const card of showdownHand.cards) {
-      const mc = makeMiniCard(card, pocket.has(card))
-      mc.x = cx; mc.y = nameT.height + 3
-      s.handSection.addChild(mc)
-      cx += MINI_W + MINI_GAP
-    }
+  if (showdownHand || showdownPocket) {
+    buildHandSection(s.handSection, showdownHand ?? null, showdownPocket ?? null)
   }
 
   // Re-layout vertical stack

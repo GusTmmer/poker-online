@@ -185,6 +185,15 @@ const ActionError = styled.span`
   font-family: 'Cormorant Garamond', Georgia, serif;
 `
 
+const Waiting = styled.span`
+  color: ${palette.creamMuted};
+  font-family: 'Cinzel', Georgia, serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+  padding: 0.85rem 0;
+`
+
 interface ControlBarProps {
   gameState: GameStateUpdate
   myPlayerId: number
@@ -215,7 +224,12 @@ function ControlBarShell({
   )
 }
 
-export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) {
+export function ControlBar({
+  gameState,
+  myPlayerId,
+  tableId,
+  revealing = false,
+}: ControlBarProps & { /** An all-in runout is still being revealed on the table. */ revealing?: boolean }) {
   const { mode, isMyTurn, amIReady, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise } =
     selectControls(gameState, myPlayerId)
 
@@ -261,6 +275,14 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
           I&#39;m back
         </Button>
         {actionFailed && <ActionError>{actionError ?? 'Could not reactivate'}</ActionError>}
+      </ControlBarShell>
+    )
+  }
+
+  if (mode === 'lobby' && revealing) {
+    return (
+      <ControlBarShell {...shellProps}>
+        <Waiting data-testid="revealing">Revealing the board…</Waiting>
       </ControlBarShell>
     )
   }

@@ -56,6 +56,46 @@ describe('deriveEvents', () => {
     expect(kinds(deriveEvents(prev, next, createDeriveContext()))).toContain('round_started')
   })
 
+  it('emits round_started when a short-stacked hand is dealt straight to showdown', () => {
+    const prev = state({ gameStatus: 'WAITING', roundStage: null })
+    const next = state({ gameStatus: 'RUNNING', roundStage: 'SHOWDOWN' })
+    expect(kinds(deriveEvents(prev, next, createDeriveContext()))).toContain('round_started')
+  })
+
+  it('emits player_raised for a bet and a raise, but not for a call or posted blinds', () => {
+    const ctx = createDeriveContext()
+    const flop = (bets: [number, number], chips: [number, number] = [1000, 1000]) =>
+      state({
+        gameStatus: 'RUNNING',
+        roundStage: 'BET_FLOP',
+        players: [player({ id: 1, currentBet: bets[0], chips: chips[0] }), player({ id: 2, currentBet: bets[1], chips: chips[1] })],
+      })
+
+    expect(deriveEvents(flop([0, 0]), flop([40, 0]), ctx)).toContainEqual({ kind: 'player_raised', playerId: 1, action: 'bet', to: 40 })
+    expect(deriveEvents(flop([40, 0]), flop([40, 120]), ctx)).toContainEqual({ kind: 'player_raised', playerId: 2, action: 'raise', to: 120 })
+    expect(kinds(deriveEvents(flop([40, 120]), flop([120, 120]), ctx))).not.toContain('player_raised')
+
+    const waiting = state({ gameStatus: 'WAITING', roundStage: null })
+    const blinds = state({
+      gameStatus: 'RUNNING',
+      roundStage: 'BET_BLINDS',
+      players: [player({ id: 1, currentBet: 10 }), player({ id: 2, currentBet: 20 })],
+    })
+    expect(kinds(deriveEvents(waiting, blinds, ctx))).not.toContain('player_raised')
+  })
+
+  it('emits player_all_in when a stack goes in, instead of player_raised', () => {
+    const prev = state({ gameStatus: 'RUNNING', roundStage: 'BET_TURN', players: [player({ id: 1 }), player({ id: 2 })] })
+    const next = state({
+      gameStatus: 'RUNNING',
+      roundStage: 'BET_TURN',
+      players: [player({ id: 1, currentBet: 1000, chips: 0 }), player({ id: 2 })],
+    })
+    const events = deriveEvents(prev, next, createDeriveContext())
+    expect(events).toContainEqual({ kind: 'player_all_in', playerId: 1, to: 1000 })
+    expect(kinds(events)).not.toContain('player_raised')
+  })
+
   it('emits turn_changed when the acting player changes', () => {
     const prev = state({ roundStage: 'BET_FLOP', nextPlayerIdToAct: 1 })
     const next = state({ roundStage: 'BET_FLOP', nextPlayerIdToAct: 2 })
