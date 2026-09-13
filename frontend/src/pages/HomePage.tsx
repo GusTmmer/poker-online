@@ -42,20 +42,22 @@ const Tab = styled.button<{ active: boolean }>`
   }
 `
 
-// Labels row + inputs row share the same 2-column grid so inputs always align,
-// regardless of how many lines the label text wraps to.
-const FieldRow = styled.div`
+// Every create field sits on one 2-column grid with the same label style. Items align to the row's
+// bottom edge, so inputs in a row line up even when one label wraps to two lines.
+const FieldGrid = styled.div`
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 0.75rem;
-  row-gap: 0.35rem;
+  row-gap: 1.1rem;
+  align-items: end;
 `
 
-const FieldLabel = styled.span`
-  font-size: 0.95rem;
-  color: ${palette.creamMuted};
-  align-self: end;
+const WideField = styled(FormLabel)`
+  grid-column: 1 / -1;
+`
+
+const Muted = styled.span`
+  color: #7a6a4a;
 `
 
 type Mode = 'create' | 'join'
@@ -79,6 +81,9 @@ export function HomePage() {
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(30)
   const [blindEscalationOrbits, setBlindEscalationOrbits] = useState(2)
   const [blindEscalationMultiplier, setBlindEscalationMultiplier] = useState(2.0)
+  // null = follow the starting stack (2%), until the player sets it explicitly.
+  const [bigBlindOverride, setBigBlindOverride] = useState<number | null>(null)
+  const bigBlind = bigBlindOverride ?? Math.max(2, Math.floor(startingChips / 50))
 
   const [joinName, setJoinName] = useState('')
   const [tableIdStr, setTableIdStr] = useState('')
@@ -105,6 +110,7 @@ export function HomePage() {
         turnTimerSeconds,
         blindEscalationOrbits,
         blindEscalationMultiplier,
+        bigBlind,
       })
       navigate(`/table/${response.tableId}`)
     } catch (e) {
@@ -147,75 +153,96 @@ export function HomePage() {
 
         {mode === 'create' ? (
           <>
-            <FormLabel>
-              Your name
-              <FormInput
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                placeholder="Alice"
-                maxLength={24}
-                required
-              />
-            </FormLabel>
-            <FormLabel>
-              <span>
-                Table name <span style={{ color: '#7a6a4a' }}>(optional)</span>
-              </span>
-              <FormInput
-                value={tableName}
-                onChange={(e) => setTableName(e.target.value)}
-                placeholder="Friday Night Poker"
-                maxLength={MAX_TABLE_NAME_LENGTH}
-              />
-            </FormLabel>
-            <FieldRow>
-              <FieldLabel>Max players</FieldLabel>
-              <FieldLabel>Starting chips</FieldLabel>
-              <FormInput
-                type="number"
-                min={2}
-                max={10}
-                value={maxPlayers}
-                onChange={numericSetter(setMaxPlayers)}
-              />
-              <FormInput
-                type="number"
-                min={100}
-                step={100}
-                value={startingChips}
-                onChange={numericSetter(setStartingChips)}
-              />
-            </FieldRow>
-            <FieldRow>
-              <FieldLabel>Turn timer (s)</FieldLabel>
-              <FieldLabel>Blind increase every</FieldLabel>
-              <FormInput
-                type="number"
-                min={10}
-                max={120}
-                value={turnTimerSeconds}
-                onChange={numericSetter(setTurnTimerSeconds)}
-              />
-              <FormInput
-                type="number"
-                min={1}
-                max={10}
-                value={blindEscalationOrbits}
-                onChange={numericSetter(setBlindEscalationOrbits)}
-                placeholder="orbits"
-              />
-            </FieldRow>
-            <FormLabel>
-              Blind multiplier
-              <FormInput
-                type="number"
-                min={1.1}
-                max={5}
-                step={0.1}
-                value={blindEscalationMultiplier}
-                onChange={numericSetter(setBlindEscalationMultiplier)}
-              />
-            </FormLabel>
+            <FieldGrid>
+              <WideField>
+                Your name
+                <FormInput
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  placeholder="Alice"
+                  maxLength={24}
+                  required
+                />
+              </WideField>
+              <WideField>
+                <span>
+                  Table name <Muted>(optional)</Muted>
+                </span>
+                <FormInput
+                  value={tableName}
+                  onChange={(e) => setTableName(e.target.value)}
+                  placeholder="Friday Night Poker"
+                  maxLength={MAX_TABLE_NAME_LENGTH}
+                />
+              </WideField>
+              <FormLabel>
+                Max players
+                <FormInput
+                  type="number"
+                  min={2}
+                  max={10}
+                  value={maxPlayers}
+                  onChange={numericSetter(setMaxPlayers)}
+                />
+              </FormLabel>
+              <FormLabel>
+                Starting chips
+                <FormInput
+                  type="number"
+                  min={100}
+                  step={100}
+                  value={startingChips}
+                  onChange={numericSetter(setStartingChips)}
+                />
+              </FormLabel>
+              <FormLabel>
+                <span>
+                  Big blind <Muted>(SB {Math.floor(bigBlind / 2)})</Muted>
+                </span>
+                <FormInput
+                  data-testid="input-big-blind"
+                  type="number"
+                  min={2}
+                  max={Math.floor(startingChips / 2)}
+                  step={2}
+                  value={bigBlind}
+                  onChange={numericSetter(setBigBlindOverride)}
+                />
+              </FormLabel>
+              <FormLabel>
+                Turn timer (s)
+                <FormInput
+                  type="number"
+                  min={10}
+                  max={120}
+                  value={turnTimerSeconds}
+                  onChange={numericSetter(setTurnTimerSeconds)}
+                />
+              </FormLabel>
+              <FormLabel>
+                <span>
+                  Blinds up every <Muted>(orbits)</Muted>
+                </span>
+                <FormInput
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={blindEscalationOrbits}
+                  onChange={numericSetter(setBlindEscalationOrbits)}
+                />
+              </FormLabel>
+              <FormLabel>
+                Blind multiplier
+                <FormInput
+                  type="number"
+                  min={1.1}
+                  max={5}
+                  step={0.1}
+                  value={blindEscalationMultiplier}
+                  onChange={numericSetter(setBlindEscalationMultiplier)}
+                />
+              </FormLabel>
+            </FieldGrid>
           </>
         ) : (
           <>

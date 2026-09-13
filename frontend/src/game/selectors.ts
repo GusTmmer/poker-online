@@ -18,7 +18,7 @@ export interface Controls {
   isGameOver: boolean
   /** Acting only: chips needed to call (0 = check). */
   amountToCall: number
-  /** Acting only: minimum legal raise-on-top. */
+  /** Acting only: minimum legal raise-on-top (when above maxRaiseOnTop, only all-in is possible). */
   minRaise: number
   /** Acting only: largest raise-on-top (i.e. all-in size). */
   maxRaiseOnTop: number
@@ -32,13 +32,8 @@ export function selectControls(state: GameStateUpdate, myPlayerId: number): Cont
   const isMyTurn = roundInProgress && state.nextPlayerIdToAct === myPlayerId
   const amIReady = state.readyPlayerIds.includes(myPlayerId)
 
-  const maxCurrentBet = Math.max(0, ...state.players.map((p) => p.currentBet))
-  const myCurrentBet = me?.currentBet ?? 0
   const myChips = me?.chips ?? 0
-  const amountToCall = Math.max(0, maxCurrentBet - myCurrentBet)
-  const minRaise = Math.max(state.blinds.big, maxCurrentBet)
-  const maxRaiseOnTop = Math.max(0, myChips - amountToCall)
-  const canRaise = maxRaiseOnTop >= minRaise
+  const { amountToCall, minRaise, maxRaiseOnTop, canRaise } = bettingLimits(state, myChips, me?.currentBet ?? 0)
 
   const isGameOver =
     state.gameStatus === 'WAITING' && state.players.filter((p) => p.chips > 0).length <= 1
@@ -52,4 +47,29 @@ export function selectControls(state: GameStateUpdate, myPlayerId: number): Cont
     : 'acting'
 
   return { mode, isMyTurn, amIReady, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise }
+}
+
+/**
+ * The server computes the betting limits (it knows the last raise size and whether raising is reopened),
+ * so use them when present. The fallback approximates them from the snapshot for frames without them.
+ */
+function bettingLimits(state: GameStateUpdate, myChips: number, myCurrentBet: number) {
+  const options = state.myBettingOptions
+  if (options) {
+    return {
+      amountToCall: options.amountToCall,
+      minRaise: options.minRaiseBy,
+      maxRaiseOnTop: options.maxRaiseBy,
+      canRaise: options.canRaise,
+    }
+  }
+  const maxCurrentBet = Math.max(0, ...state.players.map((p) => p.currentBet))
+  const amountToCall = Math.max(0, maxCurrentBet - myCurrentBet)
+  const maxRaiseOnTop = Math.max(0, myChips - amountToCall)
+  return {
+    amountToCall,
+    minRaise: state.blinds.big,
+    maxRaiseOnTop,
+    canRaise: maxRaiseOnTop > 0,
+  }
 }

@@ -48,6 +48,23 @@ const ErrorBadge = styled.span`
   pointer-events: none;
 `
 
+const ErrorBubble = styled.div`
+  position: absolute;
+  bottom: 3rem;
+  right: 0;
+  width: max-content;
+  max-width: 16rem;
+  background: ${palette.dangerBottom};
+  color: ${palette.cream};
+  border: 1px solid ${palette.dangerTop};
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 0.9rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+`
+
 const Dropdown = styled.div`
   position: absolute;
   bottom: 3rem;
@@ -119,7 +136,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
   const [nameDraft, setNameDraft] = useState('')
   const [savingName, setSavingName] = useState(false)
   const { tableInfo, refresh } = useSession()
-  const { failed, showError } = useErrorFlash()
+  const { failed, message: errorMessage, showError } = useErrorFlash(4000)
   const rootRef = useRef<HTMLDivElement>(null)
 
   function openRename() {
@@ -133,8 +150,8 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
       await renameTable(tableId, nameDraft)
       await refresh()
       setMenuView(null)
-    } catch {
-      showError()
+    } catch (e) {
+      showError(e)
     } finally {
       setSavingName(false)
     }
@@ -155,8 +172,9 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
     setMenuView(null)
     try {
       await action()
-    } catch {
-      showError()
+    } catch (e) {
+      // Surface the server's reason (e.g. "Can only kick offline or idle players"), not just "failed".
+      showError(e)
     }
   }
 
@@ -168,6 +186,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
         ⋮
       </MenuButton>
       {failed && <ErrorBadge>failed</ErrorBadge>}
+      {failed && errorMessage && !menuView && <ErrorBubble role="alert">{errorMessage}</ErrorBubble>}
       {menuView === 'main' && (
         <Dropdown>
           <Item onClick={openRename}>Rename table…</Item>

@@ -49,6 +49,20 @@ describe('selectControls', () => {
     expect(selectControls(s, 1).isGameOver).toBe(true)
   })
 
+  it('uses the server betting options when present', () => {
+    const s = state({
+      roundStage: 'BET_BLINDS',
+      nextPlayerIdToAct: 1,
+      players: [player({ id: 1, chips: 900, currentBet: 100 }), player({ id: 2, currentBet: 300 })],
+      myBettingOptions: { amountToCall: 200, minRaiseBy: 200, maxRaiseBy: 700, canRaise: false },
+    })
+    const c = selectControls(s, 1)
+    expect(c.amountToCall).toBe(200)
+    expect(c.minRaise).toBe(200)
+    expect(c.maxRaiseOnTop).toBe(700)
+    expect(c.canRaise).toBe(false)
+  })
+
   it('is acting on the local player turn with call/raise amounts', () => {
     const s = state({
       roundStage: 'BET_FLOP',
@@ -59,7 +73,7 @@ describe('selectControls', () => {
     expect(c.mode).toBe('acting')
     expect(c.isMyTurn).toBe(true)
     expect(c.amountToCall).toBe(80)       // 100 - 20
-    expect(c.minRaise).toBe(100)          // max(bigBlind 20, maxBet 100)
+    expect(c.minRaise).toBe(20)           // fallback: the big blind
     expect(c.maxRaiseOnTop).toBe(920)     // 1000 - 80
     expect(c.canRaise).toBe(true)
   })

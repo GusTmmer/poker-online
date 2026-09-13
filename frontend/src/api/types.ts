@@ -6,6 +6,8 @@ export interface CreateTableRequest {
   maxPlayers?: number
   blindEscalationOrbits?: number
   blindEscalationMultiplier?: number
+  /** Big blind for the first hand (small blind = half). Omitted → derived from startingChips. */
+  bigBlind?: number
 }
 
 export interface CreateTableResponse {
@@ -154,6 +156,17 @@ export interface GameStateUpdate {
   message: string | null
   /** Epoch-ms when the current turn timer expires. Absent when no timer is running. */
   turnTimerEndsAt?: number
+  /** The recipient's own betting limits while they're in a live betting round. */
+  myBettingOptions?: BettingOptions | null
+}
+
+/** Chip limits for the local player's next action; raise amounts are on top of the call. */
+export interface BettingOptions {
+  amountToCall: number
+  minRaiseBy: number
+  maxRaiseBy: number
+  /** False when raising isn't reopened for the player or nobody is left to raise against. */
+  canRaise: boolean
 }
 
 export interface SimpleMessage {

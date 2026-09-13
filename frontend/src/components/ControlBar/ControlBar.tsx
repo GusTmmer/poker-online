@@ -5,7 +5,7 @@ import type { ActionType, GameStateUpdate } from '../../api/types'
 import { selectControls } from '../../game/selectors'
 import { readyUp, sendAction, startRound, setPlayerOnline, restartGame } from '../../api/client'
 import { VotingMenu } from './VotingMenu'
-import { RAISE_STEP, snapRaiseValue } from './snapRaiseValue'
+import { raiseStep, snapRaiseValue } from './snapRaiseValue'
 import { TurnTimer } from '../TurnTimer/TurnTimer'
 import { gradient, palette } from '../../theme'
 
@@ -221,15 +221,16 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
 
   const [raiseValue, setRaiseValue] = useState(0)
   const [busy, setBusy] = useState(false)
-  const { failed: actionFailed, showError } = useErrorFlash()
+  const { failed: actionFailed, message: actionError, showError } = useErrorFlash(4000)
+  const step = raiseStep(gameState.blinds.small)
 
   async function withBusy(fn: () => Promise<unknown>, onSuccess?: () => void) {
     setBusy(true)
     try {
       await fn()
       onSuccess?.()
-    } catch {
-      showError()
+    } catch (e) {
+      showError(e)
     } finally {
       setBusy(false)
     }
@@ -244,7 +245,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
   const handleActivate = () => withBusy(() => setPlayerOnline(tableId))
 
   function handleSliderChange(raw: number) {
-    setRaiseValue(snapRaiseValue(raw, minRaise, maxRaiseOnTop))
+    setRaiseValue(snapRaiseValue(raw, minRaise, maxRaiseOnTop, step))
   }
 
   const shellProps = { gameState, myPlayerId, tableId }
@@ -259,7 +260,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
         <Button variant="primary" disabled={busy} onClick={handleActivate}>
           I&#39;m back
         </Button>
-        {actionFailed && <ActionError>Could not reactivate</ActionError>}
+        {actionFailed && <ActionError>{actionError ?? 'Could not reactivate'}</ActionError>}
       </ControlBarShell>
     )
   }
@@ -275,7 +276,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
         <Button data-testid="btn-start-round" disabled={busy} onClick={isGameOver ? handleRestartGame : handleStartRound}>
           {isGameOver ? 'Start New Game' : 'Start Round'}
         </Button>
-        {actionFailed && <ActionError>Action failed</ActionError>}
+        {actionFailed && <ActionError>{actionError ?? 'Action failed'}</ActionError>}
       </ControlBarShell>
     )
   }
@@ -313,7 +314,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
           </>
         )}
       </Button>
-      {actionFailed && <ActionError>Action failed</ActionError>}
+      {actionFailed && <ActionError>{actionError ?? 'Action failed'}</ActionError>}
       {canRaise && (
         <SliderWrap>
           <RangeInput
@@ -321,7 +322,7 @@ export function ControlBar({ gameState, myPlayerId, tableId }: ControlBarProps) 
             fillPercent={fillPercent}
             min={0}
             max={maxRaiseOnTop}
-            step={RAISE_STEP}
+            step={step}
             value={raiseValue}
             disabled={!isMyTurn || busy}
             onChange={(e) => handleSliderChange(Number(e.target.value))}
