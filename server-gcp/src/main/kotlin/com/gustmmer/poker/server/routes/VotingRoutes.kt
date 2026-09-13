@@ -68,6 +68,7 @@ fun Application.configureVotingRoutes(
                     VoteResolution.KickPlayer(target)
                 }
                 "RESTART_GAME" -> VoteResolution.RestartGame
+                "INCREASE_BLINDS" -> VoteResolution.IncreaseBlinds
                 else -> return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Unknown resolution type"))
             }
 

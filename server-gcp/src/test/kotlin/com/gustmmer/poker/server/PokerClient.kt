@@ -35,13 +35,21 @@ class PokerClient(private val http: HttpClient) {
         maxPlayers: Int = 6,
         blindEscalationOrbits: Int = 2,
         blindEscalationMultiplier: Double = 2.0,
+        bigBlind: Int? = null,
     ): CreateTableResponse =
         http.post(TablesResource()) {
-            setJsonBody(CreateTableRequest(playerName = playerName, startingChips = startingChips, turnTimerSeconds = turnTimerSeconds, maxPlayers = maxPlayers, blindEscalationOrbits = blindEscalationOrbits, blindEscalationMultiplier = blindEscalationMultiplier))
+            setJsonBody(CreateTableRequest(playerName = playerName, startingChips = startingChips, turnTimerSeconds = turnTimerSeconds, maxPlayers = maxPlayers, blindEscalationOrbits = blindEscalationOrbits, blindEscalationMultiplier = blindEscalationMultiplier, bigBlind = bigBlind))
         }.body()
+
+    /** Raw create call, for asserting validation errors. */
+    suspend fun createTableRaw(request: CreateTableRequest): ApiResult =
+        http.post(TablesResource()) { setJsonBody(request) }.toApiResult()
 
     suspend fun getTable(tableId: Int): TableInfoResponse =
         http.get(TableResource(tableId)).body()
+
+    suspend fun leaveTable(tableId: Int): ApiResult =
+        http.delete(TablePlayerMeResource(tableId)).toApiResult()
 
     suspend fun joinTable(tableId: Int, playerName: String): HttpStatusCode =
         http.post(TablePlayersResource(tableId)) {
@@ -75,6 +83,11 @@ class PokerClient(private val http: HttpClient) {
         http.post(TableVotingSessionsResource(tableId)) {
             setJsonBody(CreateVoteSessionRequest(resolution, targetPlayerId))
         }.body()
+
+    suspend fun createVoteRaw(tableId: Int, resolution: String, targetPlayerId: Int? = null): ApiResult =
+        http.post(TableVotingSessionsResource(tableId)) {
+            setJsonBody(CreateVoteSessionRequest(resolution, targetPlayerId))
+        }.toApiResult()
 
     /** Returns null when the session no longer exists (404); throws on any other error. */
     suspend fun castVote(tableId: Int, sessionId: String, vote: String): VoteSessionResponse? {

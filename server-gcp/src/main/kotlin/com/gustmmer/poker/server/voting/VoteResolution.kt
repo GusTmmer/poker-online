@@ -12,6 +12,7 @@ sealed class VoteResolution {
     data object UnpauseGame : VoteResolution()
     data class KickPlayer(val targetPlayerId: Int) : VoteResolution()
     data object RestartGame : VoteResolution()
+    data object IncreaseBlinds : VoteResolution()
 
     val typeName: String
         get() = when (this) {
@@ -19,6 +20,7 @@ sealed class VoteResolution {
             is UnpauseGame -> "UNPAUSE_GAME"
             is KickPlayer -> "KICK_PLAYER"
             is RestartGame -> "RESTART_GAME"
+            is IncreaseBlinds -> "INCREASE_BLINDS"
         }
 
     val kickTargetId: Int? get() = (this as? KickPlayer)?.targetPlayerId
@@ -29,6 +31,7 @@ sealed class VoteResolution {
             "UNPAUSE_GAME" -> UnpauseGame
             "KICK_PLAYER" -> KickPlayer(requireNotNull(targetPlayerId) { "KICK_PLAYER needs a target" })
             "RESTART_GAME" -> RestartGame
+            "INCREASE_BLINDS" -> IncreaseBlinds
             else -> error("Unknown resolution type: $resolutionType")
         }
 

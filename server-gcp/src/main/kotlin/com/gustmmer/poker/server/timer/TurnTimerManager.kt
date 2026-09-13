@@ -60,6 +60,29 @@ class TurnTimerManager(
     }
 
     /**
+     * Post-commit follow-up for anything that may have ended or advanced a hand (an action, a new hand
+     * dealt straight to showdown, a player folded by leaving or a kick). A finished hand is cleared to
+     * WAITING in its *own* commit, so its showdown reveal fans out as a distinct frame first. Then the
+     * turn timer is armed for the next bettor, or stopped.
+     */
+    suspend fun settleAfterCommit(tableId: Int) {
+        withTable(tableId, persistence) { table ->
+            val round = table.currentState.roundState
+            // Re-checked inside the transaction: a hand dealt in the gap is never clobbered.
+            if (round != null && !round.pokerRoundStage.isBettingRound()) table.clearRoundState()
+            ServiceResult.Ok(Unit)
+        }
+
+        val state = loadTable(tableId, persistence) ?: return
+        val roundState = state.roundState
+        if (state.gameStatus == GameStatus.RUNNING && roundState != null && roundState.pokerRoundStage.isBettingRound()) {
+            startTimer(tableId, state.config.turnTimerSeconds * 1000L)
+        } else {
+            cancelTimer(tableId)
+        }
+    }
+
+    /**
      * Stops the timer and returns the milliseconds left on the current turn (to resume after an
      * unpause), derived from the persisted start time. Null when no round/timer is active.
      */
@@ -85,8 +108,13 @@ class TurnTimerManager(
 
             when (roundState.playerOrdering.bettingPlayer().status) {
                 PlayerStatus.OFFLINE, PlayerStatus.IDLE -> {
-                    // The commit fans out to clients via the bus subscription.
-                    withTable(tableId, persistence) { it.autoPlayForCurrentPlayer(); ServiceResult.Ok(Unit) }
+                    // The commit fans out to clients via the bus subscription. Stop if nothing was played
+                    // (or it was rejected) — looping again would never make progress.
+                    val played = withTable(tableId, persistence) { ServiceResult.Ok(it.autoPlayForCurrentPlayer()) }
+                    if (played !is ServiceResult.Ok || played.value == null) {
+                        log.warn("Auto-play made no progress on table {}: {}", tableId, played)
+                        break
+                    }
                 }
                 PlayerStatus.ONLINE -> {
                     startTimer(tableId, turnTimerMs)

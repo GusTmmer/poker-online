@@ -40,6 +40,7 @@ class GameService(
             name = normalizeTableName(request.name),
             blindEscalationOrbits = request.blindEscalationOrbits,
             blindEscalationMultiplier = request.blindEscalationMultiplier,
+            startingBigBlind = request.bigBlind,
         )
 
         val playerId = 0
@@ -80,6 +81,7 @@ class GameService(
     suspend fun getTableSummary(tableId: Int, playerId: Int): TableSummary? {
         val state = loadTable(tableId, persistence) ?: return null
         val player = state.players.firstOrNull { it.id == playerId } ?: return null
+        if (playerId in state.pendingRemovals) return null
         return TableSummary(
             tableId = state.id,
             name = state.config.name,
@@ -92,22 +94,21 @@ class GameService(
 
     /**
      * Permanently removes [playerId] from the table, freeing their seat for a new player — the hard
-     * counterpart to going OFFLINE (which keeps the seat). Safe to call mid-hand: the active hand holds
-     * its own participant snapshot, so it still resolves correctly, and we set the player OFFLINE first
-     * so auto-play folds them on their turn ([PokerTable.kickPlayer] also auto-folds them if they're the
-     * current bettor). Idempotent — a no-op if they're already gone.
+     * counterpart to going OFFLINE (which keeps the seat). Safe to call mid-hand: [PokerTable.kickPlayer]
+     * folds them immediately and keeps them seated until the hand is cleared. Idempotent — a no-op if
+     * they're already gone or already leaving.
      */
     suspend fun leaveTable(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         val result = withTable(tableId, persistence) { table ->
-            if (table.currentState.players.none { it.id == playerId }) {
+            if (table.currentState.players.none { it.id == playerId } || playerId in table.currentState.pendingRemovals) {
                 return@withTable ServiceResult.Ok(mapOf("status" to "not_seated"))
             }
             table.setPlayerOffline(playerId)
             table.kickPlayer(playerId)
             ServiceResult.Ok(mapOf("status" to "left"))
         }
-        // The removal may have auto-folded the current bettor and advanced the round; resync the timer.
-        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        // The fold may have advanced the turn or ended the hand.
+        if (result is ServiceResult.Ok) timerManager.settleAfterCommit(tableId)
         return result
     }
 
@@ -145,65 +146,22 @@ class GameService(
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Not your turn")
             }
 
-            // Acting un-idles the player; this and the command commit together. An invalid command
-            // throws before staging anything, so nothing is committed (the dirty flag stays clear).
+            // Acting un-idles the player; this and the command commit together. An invalid command throws
+            // (an engine rule violation), which withTable turns into an error and discards the staged changes.
             table.setPlayerOnline(playerId)
-            try {
-                table.processPlayerCommand(command)
-            } catch (e: IllegalArgumentException) {
-                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid action")
-            } catch (e: IllegalStateException) {
-                log.error("Invalid game state applying action for player {} on table {}", playerId, tableId, e)
-                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid game state")
-            }
+            table.processPlayerCommand(command)
 
             // NOTE: if this action ended the hand, the SHOWDOWN state is committed and fanned out here
-            // on its own. Clearing to WAITING is a *separate* commit (see endRoundIfOver below) so the
+            // on its own. Clearing to WAITING is a *separate* commit (see TurnTimerManager.settleAfterCommit) so the
             // showdown reveal reaches clients as a distinct frame — folding it into this block would
             // overwrite the reveal in memory before it is ever broadcast (the whole block is one commit).
             ServiceResult.Ok(mapOf("status" to "ok"))
         }
 
-        if (result is ServiceResult.Ok) {
-            endRoundIfOver(tableId)
-            advanceTimer(tableId)
-        }
+        // If this action ended the hand, the SHOWDOWN state was committed (and fans out) on its own;
+        // clearing to WAITING is a separate commit so the reveal reaches clients as a distinct frame.
+        if (result is ServiceResult.Ok) timerManager.settleAfterCommit(tableId)
         return result
-    }
-
-    /**
-     * If the hand has ended (round reached SHOWDOWN or was preemptively resolved), transition to
-     * WAITING for ready-up in a commit *separate* from the action that ended it — the showdown reveal
-     * must fan out on its own frame first ([TableConnectionManager] only reveals pocket cards while the
-     * round is in SHOWDOWN). Guarded and re-checked inside the transaction: if a betting round is live
-     * (e.g. a start-round raced into the gap and dealt a fresh hand) nothing is staged, so no spurious
-     * write or broadcast, and a freshly dealt round is never clobbered.
-     */
-    private suspend fun endRoundIfOver(tableId: Int) {
-        withTable(tableId, persistence) { table ->
-            val round = table.currentState.roundState
-            if (round != null && !round.pokerRoundStage.isBettingRound()) {
-                table.clearRoundState()
-            }
-            ServiceResult.Ok(Unit)
-        }
-    }
-
-    /**
-     * Post-commit timer transition shared by action/activation flows: start the next player's timer
-     * when a betting round is live, otherwise stop it. The timer start itself commits (persisting the
-     * deadline), which the bus then fans out — so no explicit broadcast is needed here.
-     */
-    private suspend fun advanceTimer(tableId: Int) {
-        val state = loadTable(tableId, persistence)
-        val roundState = state?.roundState
-        if (state != null && state.gameStatus == GameStatus.RUNNING &&
-            roundState != null && roundState.pokerRoundStage.isBettingRound()
-        ) {
-            timerManager.startTimer(tableId, turnTimerMs(state))
-        } else {
-            timerManager.cancelTimer(tableId)
-        }
     }
 
     suspend fun startRound(tableId: Int): ServiceResult<Map<String, String>> {
@@ -219,7 +177,8 @@ class GameService(
             table.newPokerRound()
             ServiceResult.Ok(mapOf("status" to "round_started"))
         }
-        if (result is ServiceResult.Ok) advanceTimer(tableId)
+        // Short stacks can deal a hand straight to showdown; settle clears it and arms the timer otherwise.
+        if (result is ServiceResult.Ok) timerManager.settleAfterCommit(tableId)
         return result
     }
 
@@ -263,7 +222,7 @@ class GameService(
             roundStarted = allReady
             ServiceResult.Ok(mapOf("status" to if (allReady) "round_started" else "ready"))
         }
-        if (result is ServiceResult.Ok && roundStarted) advanceTimer(tableId)
+        if (result is ServiceResult.Ok && roundStarted) timerManager.settleAfterCommit(tableId)
         return result
     }
 

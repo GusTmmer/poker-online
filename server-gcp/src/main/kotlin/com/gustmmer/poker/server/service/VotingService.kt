@@ -5,7 +5,6 @@ import com.gustmmer.poker.GameStatus
 import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PokerTableState
-import com.gustmmer.poker.isGameOver
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.routes.VoteSessionResponse
 import com.gustmmer.poker.server.routes.toResponse
@@ -21,7 +20,7 @@ import java.util.UUID
  * Runs votes through the table itself: the tally lives in [PokerTableState.activeVotes], so opening or
  * casting a vote is just a [withTable] commit that fans out to every instance via the bus — no in-memory
  * session map, no cross-instance gap. When a cast tips a vote over the line, its consequence
- * (pause/unpause/kick/restart) is staged in the *same* commit and the vote is closed atomically; only the
+ * (pause/unpause/kick/restart/increase blinds) is staged in the *same* commit and the vote is closed atomically; only the
  * post-commit side effects (timer transitions, ephemeral toasts) run afterwards.
  *
  * The vote timeout is a durable Cloud Task (via [TaskScheduler]) that calls [onVoteExpired] back — so it
@@ -152,8 +151,10 @@ class VotingService(
     // ── internals ──────────────────────────────────────────────────────────────
 
     private fun validate(s: PokerTableState, resolution: VoteResolution): ServiceResult.Failed? = when (resolution) {
-        is VoteResolution.RestartGame ->
-            if (!s.isGameOver()) ServiceResult.Failed(HttpStatusCode.BadRequest, "Cannot restart while game is still active") else null
+        // Restarting mid-game is the point of the vote; a hand in progress is abandoned when it passes.
+        is VoteResolution.RestartGame -> null
+        // Takes effect from the next hand, so it's valid at any time.
+        is VoteResolution.IncreaseBlinds -> null
         is VoteResolution.PauseGame ->
             if (s.gameStatus == GameStatus.PAUSED) ServiceResult.Failed(HttpStatusCode.BadRequest, "Already paused") else null
         is VoteResolution.UnpauseGame ->
@@ -187,6 +188,7 @@ class VotingService(
         data class Unpaused(val remainingMs: Long?) : ResolutionEffect()
         data class Kicked(val playerName: String) : ResolutionEffect()
         data object Restarted : ResolutionEffect()
+        data class BlindsIncreased(val big: Int, val small: Int) : ResolutionEffect()
     }
 
     /** Stages the table mutation for a passed vote and returns what post-commit side effects to run. */
@@ -209,6 +211,10 @@ class VotingService(
             table.restartGame()
             ResolutionEffect.Restarted
         }
+        is VoteResolution.IncreaseBlinds -> {
+            table.increaseBlinds()
+            table.currentState.blinds.let { ResolutionEffect.BlindsIncreased(it.big, it.small) }
+        }
     }
 
     private suspend fun runPostCommit(tableId: Int, effect: ResolutionEffect) {
@@ -226,9 +232,15 @@ class VotingService(
                     timerManager.resolveExpiredTurns(tableId, state.config.turnTimerSeconds * 1000L)
                 }
             }
-            is ResolutionEffect.Kicked ->
+            is ResolutionEffect.Kicked -> {
                 connectionManager.broadcastMessage(tableId, "player_kicked", "${effect.playerName} was kicked")
-            ResolutionEffect.Restarted -> { /* the restarted state fans out via the bus */ }
+                // The kick folded them, which may have moved the turn or ended the hand.
+                timerManager.settleAfterCommit(tableId)
+            }
+            // The restarted state fans out via the bus; any hand it abandoned had a live turn timer.
+            ResolutionEffect.Restarted -> timerManager.cancelTimer(tableId)
+            is ResolutionEffect.BlindsIncreased ->
+                connectionManager.broadcastMessage(tableId, "blinds_increased", "Blinds go up to ${effect.small}/${effect.big} next hand")
         }
     }
 }

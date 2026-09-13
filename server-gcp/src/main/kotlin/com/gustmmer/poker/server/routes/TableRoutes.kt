@@ -27,7 +27,21 @@ data class CreateTableRequest(
     val maxPlayers: Int = 6,
     val blindEscalationOrbits: Int = 2,
     val blindEscalationMultiplier: Double = 2.0,
-)
+    /** Big blind for the first hand (small blind = half). Null derives it from [startingChips]. */
+    val bigBlind: Int? = null,
+) {
+    /** The first rule this request breaks, as a user-facing message; null when it is valid. */
+    fun validationError(): String? = when {
+        playerName.isBlank() -> "Player name is required"
+        startingChips !in 100..1_000_000 -> "Starting chips must be between 100 and 1,000,000"
+        maxPlayers !in 2..10 -> "Max players must be between 2 and 10"
+        turnTimerSeconds !in 1..600 -> "Turn timer must be between 1 and 600 seconds"
+        blindEscalationOrbits !in 1..10 -> "Blind increase interval must be between 1 and 10 orbits"
+        blindEscalationMultiplier !in 1.1..5.0 -> "Blind multiplier must be between 1.1 and 5"
+        bigBlind != null && bigBlind !in 2..startingChips / 2 -> "Big blind must be between 2 and half the starting chips"
+        else -> null
+    }
+}
 
 @Serializable
 data class CreateTableResponse(val tableId: Int, val joinLink: String, val playerId: Int)
@@ -86,6 +100,9 @@ fun Application.configureTableRoutes(
         rateLimit(MutationRateLimit) {
             post<TablesResource> {
                 val request = call.receive<CreateTableRequest>()
+                request.validationError()?.let {
+                    return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to it))
+                }
                 val created = gameService.createTable(request)
 
                 val token = jwtService.createToken(created.tableId, created.playerId)

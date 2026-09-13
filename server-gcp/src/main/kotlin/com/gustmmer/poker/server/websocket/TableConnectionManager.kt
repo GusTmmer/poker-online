@@ -38,6 +38,17 @@ data class GameStateUpdate(
     val message: String? = null,
     /** Epoch-millisecond timestamp when the current player's turn timer expires. Null when no timer is running. */
     val turnTimerEndsAt: Long? = null,
+    /** The recipient's own betting limits while a betting round is live and they are in the hand; else null. */
+    val myBettingOptions: BettingOptionsView? = null,
+)
+
+/** Chip limits for the recipient's next action. Raise amounts are increments on top of [amountToCall]. */
+@Serializable
+data class BettingOptionsView(
+    val amountToCall: Int,
+    val minRaiseBy: Int,
+    val maxRaiseBy: Int,
+    val canRaise: Boolean,
 )
 
 @Serializable
@@ -187,6 +198,15 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
         val turnTimerEndsAt = state.turnTimerStartedAt
             ?.let { it + state.config.turnTimerSeconds * 1000L }
 
+        val bettingState = roundState?.bettingRoundState
+        val me = roundState?.players?.find { it.id == forPlayerId }
+        val myBettingOptions = if (
+            bettingState != null && me != null && me.isActive() && roundState.pokerRoundStage.isBettingRound()
+        ) {
+            bettingState.optionsFor(me, roundState.players, roundState.blinds)
+                .let { BettingOptionsView(it.amountToCall, it.minRaiseBy, it.maxRaiseBy, it.canRaise) }
+        } else null
+
         return GameStateUpdate(
             type = "game_state",
             tableId = state.id,
@@ -200,6 +220,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             readyPlayerIds = state.readyPlayers.toList(),
             activeVotes = activeVotes,
             turnTimerEndsAt = turnTimerEndsAt,
+            myBettingOptions = myBettingOptions,
         )
     }
 }

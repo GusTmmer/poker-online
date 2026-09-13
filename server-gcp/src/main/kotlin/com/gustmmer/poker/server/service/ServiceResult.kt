@@ -8,6 +8,10 @@ import io.ktor.server.application.*
 import io.ktor.server.response.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
+
+@PublishedApi
+internal val serviceLog = LoggerFactory.getLogger("com.gustmmer.poker.server.service.withTable")
 
 sealed class ServiceResult<out T> {
     data class Ok<T>(val value: T, val status: HttpStatusCode = HttpStatusCode.OK) : ServiceResult<T>()
@@ -38,7 +42,9 @@ suspend fun loadTable(tableId: Int, persistence: PokerTablePersistence): PokerTa
  * one `withTable` call == one consistent state transition.
  *
  * The commit is skipped when [block] returns [ServiceResult.Failed] or staged nothing (so a
- * read-and-bail or no-op flip writes nothing). Side effects that must observe the committed state —
+ * read-and-bail or no-op flip writes nothing). An engine rule violation thrown by [block]
+ * ([IllegalArgumentException] → 400, [IllegalStateException] → 409) discards the staged changes and is
+ * returned as a failure, so a bad transition can neither 500 a request nor kill a timer callback. Side effects that must observe the committed state —
  * broadcasts, timer scheduling — belong *after* this call returns, not inside [block].
  */
 suspend fun <T> withTable(
@@ -60,6 +66,11 @@ suspend fun <T> withTable(
             if (++attempts >= maxAttempts) {
                 return ServiceResult.Failed(HttpStatusCode.Conflict, "Concurrent update, please retry")
             }
+        } catch (e: IllegalArgumentException) {
+            return ServiceResult.Failed(HttpStatusCode.BadRequest, e.message ?: "Invalid request")
+        } catch (e: IllegalStateException) {
+            serviceLog.error("Rejected invalid state transition on table {}", tableId, e)
+            return ServiceResult.Failed(HttpStatusCode.Conflict, e.message ?: "Invalid game state")
         }
     }
 }
