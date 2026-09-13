@@ -211,7 +211,9 @@ export function buildSeat(player: PlayerView, isMe: boolean, flipLabels: boolean
   // Separate objects prevent the stale-texture artefact that occurs when a single
   // Graphics+BlurFilter object is cleared and redrawn at a different scale — the
   // filter's backing texture retains old pixels from the larger shape.
-  const winBlur = new BlurFilter({ strength: 10, quality: 3 })
+  // resolution 'inherit': filters default to 1×, which caps the filtered halo below the canvas'
+  // real pixel density and renders it visibly soft/pixelated on HiDPI or scaled-up canvases.
+  const winBlur = new BlurFilter({ strength: 10, quality: 3, resolution: 'inherit' })
   winBlur.padding = 40
   const winHaloGfx = new Graphics()
   winHaloGfx.filters = [winBlur]
@@ -219,7 +221,7 @@ export function buildSeat(player: PlayerView, isMe: boolean, flipLabels: boolean
   drawHaloShape(winHaloGfx, size, hex.winGreen, 1.7)
   root.addChild(winHaloGfx)
 
-  const turnBlur = new BlurFilter({ strength: 8, quality: 3 })
+  const turnBlur = new BlurFilter({ strength: 8, quality: 3, resolution: 'inherit' })
   turnBlur.padding = 24
   const turnHaloGfx = new Graphics()
   turnHaloGfx.filters = [turnBlur]

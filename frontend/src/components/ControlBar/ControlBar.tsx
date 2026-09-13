@@ -9,7 +9,7 @@ import { raiseStep, snapRaiseValue } from './snapRaiseValue'
 import { TurnTimer } from '../TurnTimer/TurnTimer'
 import { gradient, palette } from '../../theme'
 
-const Bar = styled.div`
+const Bar = styled.div<{ compact: boolean }>`
   position: fixed;
   bottom: 0;
   left: 0;
@@ -27,6 +27,25 @@ const Bar = styled.div`
   justify-content: center;
   gap: 1rem;
   flex-wrap: wrap;
+
+  /* Phone landscape: a slim column down the right edge, so the table keeps the full height. */
+  ${(p) => p.compact && `
+    top: 0;
+    left: auto;
+    width: 8.6rem;
+    font-size: 0.8rem;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.55rem;
+    border-top: none;
+    border-left: 1px solid rgba(216, 182, 90, 0.55);
+    box-shadow: -2px 0 0 rgba(0, 0, 0, 0.6), -0.4rem 0 1.4rem rgba(0, 0, 0, 0.55);
+
+    & button[data-testid] { width: 100%; padding: 0.55rem 0.4rem; font-size: 0.7rem; }
+    & input[type='range'] { width: 100%; }
+  `}
 `
 
 const Button = styled.button<{ variant?: 'danger' | 'primary'; fixedWidth?: boolean }>`
@@ -89,6 +108,7 @@ const SliderWrap = styled.div`
   align-items: center;
   gap: 0.35rem;
   width: 11rem;
+  max-width: 100%;
   color: ${palette.creamMuted};
   font-size: 0.9rem;
   flex-shrink: 0;
@@ -163,13 +183,20 @@ const MonoValue = styled.span`
   font-family: 'Courier New', ui-monospace, monospace;
 `
 
-const CornerMenu = styled.div`
+const CornerMenu = styled.div<{ compact: boolean }>`
   position: absolute;
   right: 1rem;
   bottom: calc(100% + 0.5rem);
+
+  /* In the side column the menu sits in the top corner, left of the column. */
+  ${(p) => p.compact && `
+    bottom: auto;
+    top: 0.6rem;
+    right: calc(100% + 0.6rem);
+  `}
 `
 
-const RightSlot = styled.div`
+const RightSlot = styled.div<{ compact: boolean }>`
   position: absolute;
   right: 1rem;
   top: 50%;
@@ -177,6 +204,12 @@ const RightSlot = styled.div`
   display: flex;
   align-items: center;
   gap: 0.5rem;
+
+  ${(p) => p.compact && `
+    position: static;
+    transform: none;
+    order: -1;
+  `}
 `
 
 const ActionError = styled.span`
@@ -198,6 +231,8 @@ interface ControlBarProps {
   gameState: GameStateUpdate
   myPlayerId: number
   tableId: number
+  /** Short screen (phone landscape): lay the bar out as a right-hand column. */
+  compact?: boolean
 }
 
 /**
@@ -209,15 +244,16 @@ function ControlBarShell({
   gameState,
   myPlayerId,
   tableId,
+  compact = false,
   children,
 }: ControlBarProps & { children?: ReactNode }) {
   return (
-    <Bar data-testid="control-bar">
+    <Bar data-testid="control-bar" compact={compact}>
       {children}
-      <CornerMenu>
+      <CornerMenu compact={compact}>
         <VotingMenu gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} />
       </CornerMenu>
-      <RightSlot>
+      <RightSlot compact={compact}>
         <TurnTimer gameState={gameState} myPlayerId={myPlayerId} />
       </RightSlot>
     </Bar>
@@ -229,6 +265,7 @@ export function ControlBar({
   myPlayerId,
   tableId,
   revealing = false,
+  compact = false,
 }: ControlBarProps & { /** An all-in runout is still being revealed on the table. */ revealing?: boolean }) {
   const { mode, isMyTurn, amIReady, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise } =
     selectControls(gameState, myPlayerId)
@@ -262,7 +299,7 @@ export function ControlBar({
     setRaiseValue(snapRaiseValue(raw, minRaise, maxRaiseOnTop, step))
   }
 
-  const shellProps = { gameState, myPlayerId, tableId }
+  const shellProps = { gameState, myPlayerId, tableId, compact }
 
   if (mode === 'spectating') {
     return <ControlBarShell {...shellProps} />

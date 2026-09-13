@@ -4,12 +4,27 @@ import { useNavigate } from 'react-router-dom'
 import { useSession } from '../context/SessionContext'
 import { useGameSocket } from '../ws/useGameSocket'
 import { useStateLogger } from '../hooks/useStateLogger'
+import { useViewportMode } from '../hooks/useViewportMode'
 import { PixiPokerTable } from '../components/PixiTable/PixiPokerTable'
 import { ControlBar } from '../components/ControlBar/ControlBar'
 import { VotePopupLayer } from '../components/VotePopup/VotePopupLayer'
 import { Toasts } from '../components/Toasts'
 import { BlindsBanner } from '../components/BlindsBanner'
 import { gradient, palette } from '../theme'
+
+/**
+ * The game screen's own coordinate space. Unrotated it covers the viewport exactly; rotated for a
+ * phone held in portrait, its transform makes it the containing block for every `position: fixed`
+ * child (canvas, control bar, banners, popups), so the whole screen turns without any child knowing.
+ */
+const Stage = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  transform-origin: top left;
+  touch-action: manipulation;
+`
 
 const Status = styled.p`
   text-align: center;
@@ -72,13 +87,23 @@ export function GameScreen() {
   useStateLogger(gameState)
   // True while the canvas plays an all-in runout; the next hand waits for the reveal.
   const [revealing, setRevealing] = useState(false)
+  const viewport = useViewportMode()
 
   if (!gameState || myPlayerId === null || !tableInfo) {
     return <Status>Connecting to table {tableId}… ({connectionState})</Status>
   }
 
+  // Rotated: a landscape-sized box turned 90° clockwise about its top-left, then shifted right by the
+  // screen width so it lands exactly on the portrait viewport.
+  const stageStyle = {
+    width: viewport.width,
+    height: viewport.height,
+    // Unrotated, no transform at all: a promoted layer would resample the canvas and soften it.
+    transform: viewport.rotated ? `translateX(${viewport.height}px) rotate(90deg)` : 'none',
+  }
+
   return (
-    <>
+    <Stage style={stageStyle} data-rotated={viewport.rotated} data-compact={viewport.compact}>
       <LeaveButton data-testid="btn-leave" aria-label="Leave table" title="Leave" onClick={() => navigate('/')}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden focusable="false">
           <path
@@ -92,7 +117,13 @@ export function GameScreen() {
       </LeaveButton>
       <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
       <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} onRunoutChange={setRevealing} />
-      <ControlBar gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} revealing={revealing} />
+      <ControlBar
+        gameState={gameState}
+        myPlayerId={myPlayerId}
+        tableId={tableId}
+        revealing={revealing}
+        compact={viewport.compact}
+      />
       <VotePopupLayer gameState={gameState} tableId={tableId} />
       <Toasts toasts={toasts} onDismiss={dismissToast} />
       {gameState.gameStatus === 'PAUSED' && (
@@ -104,6 +135,6 @@ export function GameScreen() {
       {connectionState === 'abandoned' && (
         <Banner variant="error">Connection lost — please reload the page to reconnect</Banner>
       )}
-    </>
+    </Stage>
   )
 }

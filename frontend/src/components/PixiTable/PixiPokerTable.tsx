@@ -135,9 +135,24 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
       }
       sceneRef.current = scene
 
-      doResize(canvas, app.renderer)
-      const onResize = () => doResize(canvas, app.renderer)
+      const onResize = () => doResize(container, canvas, app.renderer)
+      onResize()
+      // The container follows the (possibly rotated) game stage; the control bar changes size with
+      // its mode and layout. Either one resizing re-fits the table.
+      const resizeObserver = new ResizeObserver(onResize)
+      resizeObserver.observe(container)
+      const bar = container.parentElement?.querySelector('[data-testid="control-bar"]')
+      if (bar) resizeObserver.observe(bar)
       window.addEventListener('resize', onResize)
+      // Moving the window to a display with a different pixel density fires no resize.
+      let dprQuery: MediaQueryList | null = null
+      const watchDpr = () => {
+        dprQuery?.removeEventListener('change', onDprChange)
+        dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+        dprQuery.addEventListener('change', onDprChange)
+      }
+      const onDprChange = () => { onResize(); watchDpr() }
+      watchDpr()
 
       // Drive the canvas off the frame bus: apply the snapshot statically, then
       // play any derived events. subscribe() immediately replays the last frame
@@ -154,6 +169,8 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
         unsubscribe()
         if (scene.runout) scene.runout.timers.forEach(clearTimeout)
         window.removeEventListener('resize', onResize)
+        resizeObserver.disconnect()
+        dprQuery?.removeEventListener('change', onDprChange)
         ticker.stop(); ticker.destroy()
         canvas.remove()
         app.destroy(false)
@@ -179,23 +196,47 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
 }
 
 // ─── resize ───────────────────────────────────────────────────────────────────
-// Approximate height of the fixed ControlBar so the canvas centres in the
-// remaining drawable area rather than the full viewport.
-const BOTTOM_UI_HEIGHT = 88 // px — update if bar height changes
+// Fits the table into the part of the game stage the control bar leaves free: above a
+// bottom bar, or left of the side column on short (phone landscape) screens.
+const DEFAULT_BAR_HEIGHT = 88
+// On short screens the logical canvas' empty margins are cropped: fit this much of the
+// scene (seats, labels and showdown rows) rather than the full 800×560.
+const COMPACT_CONTENT_W = 740
+const COMPACT_CONTENT_H = 500
 
 function doResize(
+  container: HTMLElement,
   canvas: HTMLCanvasElement,
   renderer: { resize: (w: number, h: number, r: number) => void },
 ) {
-  const pw  = window.innerWidth
-  const ph  = window.innerHeight - BOTTOM_UI_HEIGHT
+  // Layout sizes (offsetWidth & co.) are pre-transform, so they're right inside a rotated stage too.
+  const stageW = container.clientWidth || window.innerWidth
+  const stageH = container.clientHeight || window.innerHeight
+  const bar = container.parentElement?.querySelector<HTMLElement>('[data-testid="control-bar"]')
+  const sideBar = bar != null && bar.offsetHeight >= stageH * 0.9
+  const pw = sideBar ? stageW - bar.offsetWidth : stageW
+  const ph = sideBar ? stageH : stageH - (bar?.offsetHeight ?? DEFAULT_BAR_HEIGHT)
+
+  const compact = sideBar || ph < LH * 0.8
+  const scale = compact
+    ? Math.min(pw / COMPACT_CONTENT_W, ph / COMPACT_CONTENT_H)
+    : Math.min(pw / LW, ph / LH)
+  // Crispness: the backing store must map 1:1 onto device pixels. Pick a whole number of device
+  // pixels for the width, derive the render resolution from it, and size/place the canvas in
+  // exact device-pixel units — a fractional CSS size or offset makes the browser resample the
+  // whole bitmap, which reads as a soft, low-res table.
   const dpr = window.devicePixelRatio || 1
-  const scale = Math.min(pw / LW, ph / LH)
-  const w = LW * scale, h = LH * scale
-  // Set physical pixel count = CSS pixels × devicePixelRatio for a crisp render
-  renderer.resize(LW, LH, dpr * scale)
-  canvas.style.left   = `${(pw - w) / 2}px`
-  canvas.style.top    = '0'
+  const deviceW = Math.max(1, Math.round(LW * scale * dpr))
+  const resolution = deviceW / LW
+  const deviceH = Math.round(LH * resolution)
+  renderer.resize(LW, LH, resolution)
+  const snap = (cssPx: number) => Math.round(cssPx * dpr) / dpr
+  const w = deviceW / dpr, h = deviceH / dpr
+  // Keep the scene centre (LH/2 - SCENE_Y_OFFSET logical) in the middle of the free area; a cropped
+  // canvas simply overflows the stage edges.
+  const top = compact ? ph / 2 - (LH / 2 - SCENE_Y_OFFSET / 2) * (h / LH) : 0
+  canvas.style.left   = `${snap((pw - w) / 2)}px`
+  canvas.style.top    = `${snap(top)}px`
   canvas.style.width  = `${w}px`
   canvas.style.height = `${h}px`
 }
