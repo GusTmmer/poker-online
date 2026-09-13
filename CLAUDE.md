@@ -86,6 +86,12 @@ Single-page app built with Vite, React 19, TypeScript, and Emotion (CSS-in-JS). 
 - **`PixiPokerTable.tsx`** — Main Pixi application. Maintains a `SceneState` and updates it on every `GameStateUpdate`. Handles dealing animations, chip/pot rendering (5 randomized `POT_VARIANTS` that grow consistently), card dealing/crossfade, and the per-frame tick loop.
 - **`drawSeat.ts`** — Builds and updates the per-player seat: avatar sprite, gold turn halo (`turnHaloGfx`), green win halo (`winHaloGfx`), name/chips labels, badges (D/SB/BB), mini pocket cards. The two halo `Graphics` objects are drawn once at build time and only toggled via `visible` — never cleared and redrawn — to avoid the Pixi v8 `BlurFilter` stale-texture artefact.
 
+- **All-in runout** — `processFrame` in `PixiPokerTable.tsx` stages a frame that jumps to SHOWDOWN with undealt board cards: pocket cards are tabled, flop/turn/river are dealt with a 1s beat each, and only then do best hands, winners and payouts (`showdown`/`pot_awarded`/`chips_changed`) play; frames arriving meanwhile queue. `onRunoutChange` lets `ControlBar` hold Ready/Start ("Revealing the board…").
+- **Showdown rows** (`drawSeat.ts` `buildHandSection`) — `[pocket₁ pocket₂] ┊ [board cards completing the hand]`: pocket cards that play get a gold ring, unused ones are dimmed.
+- **Resolution / sizing** — the canvas is fitted to its container and the measured control bar; backing store and CSS size are snapped to whole device pixels (fractional sizes blur the whole table), and halo `BlurFilter`s use `resolution: 'inherit'`.
+
+**Mobile** — `useViewportMode` rotates the `GameScreen` stage 90° for a phone held in portrait (the stage's transform makes it the containing block for every fixed child), and on short screens (`compact`) the `ControlBar` becomes a right-hand column.
+
 **`ControlBar/` — In-round action bar:**
 - Shows `Ready Up` / `Start Round` when no round is active.
 - Shows `Fold` / `Call` (or `Check`) / `Raise` slider when a round is in progress **and** the local player has chips > 0. Players with 0 chips (all-in or eliminated mid-round) see a minimal bar with no action buttons.
@@ -115,6 +121,8 @@ e2e/
 ```
 
 **WS spy pattern**: Tests inject a `WebSocket` subclass via `page.addInitScript()` before the app loads. Every incoming `game_state` frame is written to `window.__lastGameState`. Tests read it back in Node.js context via `page.evaluate()` + `expect.poll()` — no DOM text scraping, no fragile CSS selectors for state.
+
+**Rate limit**: the suite creates many tables from one IP; run the local backend with `RATE_LIMIT_MUTATIONS=10000 RATE_LIMIT_READS=10000` (honored by `runLocal`) or it trips the 30/min create+join cap.
 
 **Bot players**: Each `BotClient` instance holds its own `APIRequestContext` (independent JWT cookie jar). Bots make direct HTTP calls to the backend at `localhost:8080`, bypassing Vite. Tests drive bots explicitly rather than relying on the turn timer, keeping total test runtime under 30 seconds.
 

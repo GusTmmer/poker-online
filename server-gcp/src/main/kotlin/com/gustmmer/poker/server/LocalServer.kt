@@ -19,6 +19,9 @@ fun main() {
         firestoreProjectId = "local",
         // Honor STATIC_DIR locally too, so the same-origin SPA hosting can be exercised without Docker.
         staticDir = System.getenv("STATIC_DIR")?.takeIf { it.isNotBlank() },
+        // The e2e suite creates many tables from one IP within a minute; let a local run lift the caps.
+        rateLimitMutations = System.getenv("RATE_LIMIT_MUTATIONS")?.toIntOrNull() ?: 30,
+        rateLimitReads = System.getenv("RATE_LIMIT_READS")?.toIntOrNull() ?: 60,
     )
     // In-memory analogue of the Firestore setup: NotifyingPersistence publishes each commit to the
     // in-memory bus, which the connection manager subscribes to — same fan-out path as production.

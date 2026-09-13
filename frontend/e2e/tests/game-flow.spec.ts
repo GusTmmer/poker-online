@@ -281,3 +281,63 @@ test.describe('timer: reset after action', () => {
     }
   })
 })
+
+test.describe('all-in runout', () => {
+  test('an all-in call reveals the board before the next hand can start', async ({ page }) => {
+    const bot = await BotClient.create()
+
+    try {
+      // Heads-up: the bot (dealer, small blind) shoves; the human (big blind) calls.
+      const tableId = await bot.createTable('Bot', { turnTimerSeconds: 120 })
+      await openTable(page, tableId)
+      await page.fill('input[placeholder="Your name"]', 'Human')
+      await page.click('button[type="submit"]')
+      await expect.poll(() => gs(page).then((s) => s?.players.length), { timeout: 10_000 }).toBe(2)
+
+      await bot.startRound(tableId)
+      await bot.playWhenMyTurn(tableId, 'ALL_IN')
+
+      const call = page.locator('[data-testid="btn-call"]')
+      await expect(call).toBeEnabled({ timeout: 10_000 })
+      await call.click()
+
+      // The runout holds the lobby controls while flop, turn and river are dealt…
+      await expect(page.locator('[data-testid="revealing"]')).toBeVisible({ timeout: 5_000 })
+      await expect(page.locator('[data-testid="btn-start-round"]')).not.toBeVisible()
+
+      // …then releases them once the showdown is revealed.
+      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 12_000 })
+      await expect(page.locator('[data-testid="revealing"]')).not.toBeVisible()
+    } finally {
+      await bot.dispose()
+    }
+  })
+})
+
+test.describe('mobile', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+
+  test('a phone held in portrait gets a rotated, landscape game screen', async ({ page }) => {
+    const host = await BotClient.create()
+
+    try {
+      const tableId = await host.createTable('Host')
+      await openTable(page, tableId)
+      await page.fill('input[placeholder="Your name"]', 'Human')
+      await page.click('button[type="submit"]')
+
+      const bar = page.locator('[data-testid="control-bar"]')
+      await expect(bar).toBeVisible({ timeout: 10_000 })
+      await expect(page.locator('[data-rotated="true"]')).toHaveCount(1)
+
+      // The compact side column lands along the bottom edge of the physical (portrait) screen,
+      // spanning its width, and the canvas renders within the screen.
+      const box = await bar.boundingBox()
+      expect(box!.width).toBeGreaterThan(350)
+      expect(box!.y + box!.height).toBeLessThanOrEqual(845)
+      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible()
+    } finally {
+      await host.dispose()
+    }
+  })
+})

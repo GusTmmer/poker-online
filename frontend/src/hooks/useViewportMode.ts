@@ -11,12 +11,14 @@ export interface ViewportMode {
 }
 
 const COMPACT_MAX_HEIGHT = 520
+const PHONE_MAX_SHORT_SIDE = 600
 
 function read(): ViewportMode {
   const w = window.innerWidth
   const h = window.innerHeight
   const touch = window.matchMedia('(pointer: coarse)').matches
-  const rotated = touch && h > w
+  // Phones only: a portrait tablet has room for the table as-is.
+  const rotated = touch && h > w && w < PHONE_MAX_SHORT_SIDE
   const width = rotated ? h : w
   const height = rotated ? w : h
   return { rotated, compact: height <= COMPACT_MAX_HEIGHT, width, height }
