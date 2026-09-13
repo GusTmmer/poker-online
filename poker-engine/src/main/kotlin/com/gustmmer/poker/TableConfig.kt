@@ -12,6 +12,8 @@ data class TableConfig(
     val isOpen: Boolean = true,
     val blindEscalationOrbits: Int = 2,
     val blindEscalationMultiplier: Double = 2.0,
+    /** Big blind for the first hand; null derives it from the starting stack (see [Blinds.initial]). */
+    val startingBigBlind: Int? = null,
 ) {
     companion object {
         /** Max stored length of a table [name]; the server truncates to this and the UI caps input at it. */

@@ -51,7 +51,9 @@ data class PokerRoundState(
                 players = players,
                 playerOrdering = PlayerOrdering.restore(state.playerOrdering, players),
                 pokerRoundStage = state.pokerRoundStage,
-                bettingRoundState = state.bettingRoundState?.let { BettingRoundState.restore(it, playerMap) },
+                bettingRoundState = state.bettingRoundState?.let {
+                    BettingRoundState.restore(it, playerMap, players, state.blinds)
+                },
                 communityCards = state.communityCards.toMutableList(),
             )
         }
@@ -79,13 +81,13 @@ data class PokerRoundState(
         return copy(
             pokerRoundStage = pokerRoundStage.next(),
             playerOrdering = playerOrdering.forNextBettingRound(),
-            bettingRoundState = BettingRoundState.forNewBettingRound(Pot.bettingPot())
+            bettingRoundState = BettingRoundState.forNewBettingRound(Pot.bettingPot(), players, blinds)
         )
     }
 
     fun toFirstBettingStage(): PokerRoundState = copy(
         pokerRoundStage = PokerRoundStage.BET_BLINDS,
-        bettingRoundState = BettingRoundState.forNewBettingRound(pots.last())
+        bettingRoundState = BettingRoundState.forNewBettingRound(pots.last(), players, blinds)
     )
 
     fun toShowdown(): PokerRoundState = copy(pokerRoundStage = PokerRoundStage.SHOWDOWN)

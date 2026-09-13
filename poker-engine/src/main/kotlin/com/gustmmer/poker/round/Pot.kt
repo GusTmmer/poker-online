@@ -111,24 +111,30 @@ class Pot(
         }
     }
 
+    /**
+     * Splits off the part of every bet above the smallest active player's bet into a side pot, capping
+     * this pot at that amount. Returns null when all active players are level (nothing to contest
+     * separately).
+     *
+     * Folded players' chips above the cap move to the side pot too — they're dead money there, but they
+     * must not vanish.
+     */
     fun sidePotOrNull(): Pot? {
-        val potWithOnlyActivePlayers = betsByPlayer.filterKeys(Player::isActive)
+        val activeBets = betsByPlayer.filterKeys(Player::isActive).values
+        if (activeBets.isEmpty()) return null
 
-        val minBet = potWithOnlyActivePlayers.minOf { (_, bet) -> bet }
-        val potBet = betsByPlayer.maxOfOrNull { it.value } ?: 0
-
-        if (potBet == minBet) {
+        val cap = activeBets.min()
+        if (activeBets.none { it > cap }) {
             return null
         }
 
-        val sidePot = potWithOnlyActivePlayers
-            .mapValues { (_, bet) -> bet - minBet }
+        val excess = betsByPlayer
+            .mapValues { (_, bet) -> bet - cap }
             .filterValues { it > 0 }
-            .let { sidePot(id + 1, it.toMutableMap()) }
 
-        betsByPlayer.entries.forEach { it.setValue(minBet) }
+        betsByPlayer.entries.forEach { if (it.value > cap) it.setValue(cap) }
 
-        return sidePot
+        return sidePot(id + 1, excess.toMutableMap().withDefault { 0 })
     }
 
     override fun toString(): String {

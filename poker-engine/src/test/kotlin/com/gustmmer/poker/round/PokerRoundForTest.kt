@@ -20,6 +20,14 @@ class PokerRoundForTest(private var state: PokerRoundState) {
     fun call(playerId: Int) = executePlayerCommand(Call(playerId))
     fun raise(playerId: Int, raise: Int) = executePlayerCommand(Raise(playerId, raise))
     fun allIn(playerId: Int) = executePlayerCommand(AllIn(playerId))
+    fun forceFold(playerId: Int) {
+        state = PokerRound(state).forceFold(playerId)
+        reachedPokerRoundStages.add(state.pokerRoundStage)
+    }
+
+    fun assertStage(stage: PokerRoundStage) = assertEquals(stage, state.pokerRoundStage)
+
+    fun assertNextToAct(playerId: Int) = assertEquals(playerId, state.playerOrdering.bettingPlayer().id)
 
     fun executeTestBlock(block: PokerRoundForTest.() -> Unit) {
         state = PokerRound(state).start()

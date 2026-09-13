@@ -33,26 +33,61 @@ class PokerRound(state: PokerRoundState) {
     private val communityCards
         get() = state.communityCards
 
+    /**
+     * Posts blinds, deals, and opens pre-flop betting. Short stacks can leave nobody with a decision
+     * (e.g. heads-up, the small blind is all-in for less than the big blind): the hand then runs out
+     * straight to showdown here instead of parking the turn on a player with no chips.
+     */
     fun start(): PokerRoundState {
         assert(state.pokerRoundStage == PokerRoundStage.INIT)
 
         takeBlinds()
         dealCards()
 
-        return state.toFirstBettingStage()
+        state = state.toFirstBettingStage()
+        applyBettingResult(coordinator().settle())
+        finishIfShowdown()
+
+        return state
     }
 
     fun processCommand(playerCommand: PlayerCommand): PokerRoundState {
-        assert(state.pokerRoundStage.isBettingRound())
+        if (!state.pokerRoundStage.isBettingRound()) {
+            throw IllegalStateException("Round is not in betting stage")
+        }
 
-        processPlayerCommandForBettingRound(playerCommand)
+        applyBettingResult(coordinator().processPlayerCommand(playerCommand))
+        finishIfShowdown()
 
+        return state
+    }
+
+    /**
+     * Folds [playerId] whether or not it is their turn — used when a player leaves or is kicked
+     * mid-hand. A no-op outside betting or for a player who is not in the hand.
+     */
+    fun forceFold(playerId: Int): PokerRoundState {
+        if (!state.pokerRoundStage.isBettingRound()) return state
+        val player = players.find { it.id == playerId } ?: return state
+        if (!player.isActive()) return state
+
+        if (state.playerOrdering.bettingPlayer() === player) {
+            return processCommand(Fold(playerId))
+        }
+
+        applyBettingResult(coordinator().processOutOfTurnFold(player))
+        finishIfShowdown()
+        return state
+    }
+
+    private fun coordinator() =
+        BettingRoundCoordinator(state.bettingRoundState!!, players, state.playerOrdering, state.blinds)
+
+    private fun finishIfShowdown() {
         if (state.pokerRoundStage == PokerRoundStage.SHOWDOWN) {
             showdown()
             log.debug("Final balance: {}", players)
         }
-
-        return state
     }
 
     private fun takeBlinds() {
@@ -74,24 +109,35 @@ class PokerRound(state: PokerRoundState) {
         communityCards.addAll(deck.draw(cardCount))
     }
 
-    private fun processPlayerCommandForBettingRound(playerCommand: PlayerCommand) {
-        if (!state.pokerRoundStage.isBettingRound()) {
-            throw IllegalStateException("Round is not in betting stage")
+    /**
+     * Folds a street's result into the round. A finished street advances the stage; each fresh street is
+     * settled in turn so its first bettor is a player who can actually act.
+     */
+    private fun applyBettingResult(bettingResult: BettingRoundState) {
+        var result = bettingResult
+        while (true) {
+            if (result.isComplete) {
+                processBettingRoundResultingPot(result)
+            }
+            updateRoundStateWithBettingResult(result)
+
+            if (!result.isComplete || !state.pokerRoundStage.isBettingRound()) return
+            result = coordinator().settle()
         }
-
-        val newBettingRoundState =
-            BettingRoundCoordinator(state.bettingRoundState!!, players, state.playerOrdering, state.blinds)
-                .processPlayerCommand(playerCommand)
-
-        if (newBettingRoundState.isComplete) {
-            processBettingRoundResultingPot(newBettingRoundState)
-        }
-
-        updateRoundStateWithBettingResult(newBettingRoundState)
     }
 
     private fun processBettingRoundResultingPot(newBettingState: BettingRoundState) {
         pot.mergeBetsFromPot(newBettingState.pot)
+
+        // Everyone else folded: the last player standing takes every pot, including ones they never
+        // put chips into (possible when the others were folded out of turn).
+        if (players.onlyOneIsActive()) {
+            val winner = players.first(Player::isActive)
+            log.debug("Resolving pots preemptively for {}: {}", winner, pots)
+            pots.forEach { it.distributeToWinners(setOf(winner)) }
+            pots.clear()
+            return
+        }
 
         while (true) {
             pot.sidePotOrNull()?.let(pots::add) ?: break

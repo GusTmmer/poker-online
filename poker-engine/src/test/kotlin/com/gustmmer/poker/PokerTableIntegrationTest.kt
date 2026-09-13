@@ -256,9 +256,19 @@ class PokerTableIntegrationTest {
         assertTrue(table.currentState.roundState!!.pokerRoundStage.isBettingRound())
 
         table.kickPlayer(1)
+        table.commit()
+
+        // Still seated (folded) while the hand they were dealt into is live, so the state stays restorable.
+        val kicked = table.currentState.players.single { it.id == 1 }
+        assertFalse(kicked.isActive())
+        assertEquals(setOf(1), table.currentState.pendingRemovals)
+        assertNotNull(PokerTable.restore(200, persistence)!!.currentState.roundState)
+
+        table.clearRoundState()
 
         assertEquals(2, table.currentState.players.size)
         assertNull(table.currentState.players.find { it.id == 1 })
+        assertTrue(table.currentState.pendingRemovals.isEmpty())
     }
 
     @Test

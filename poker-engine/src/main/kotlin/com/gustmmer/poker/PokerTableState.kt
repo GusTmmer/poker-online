@@ -6,6 +6,9 @@ import com.gustmmer.poker.round.PokerRoundState
 import com.gustmmer.poker.round.WireablePlayerOrdering
 import com.gustmmer.poker.round.WireablePokerRoundState
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger(PokerTableState::class.java)
 
 @Serializable
 enum class GameStatus { WAITING, RUNNING, PAUSED }
@@ -26,6 +29,7 @@ data class WireablePokerTableState(
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
     val activeVotes: List<ActiveVote> = emptyList(),
+    val pendingRemovals: List<Int> = emptyList(),
 )
 
 fun PokerTableState.isGameOver(): Boolean = players.participating().size <= 1
@@ -52,6 +56,12 @@ data class PokerTableState(
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
     val activeVotes: List<ActiveVote> = emptyList(),
+    /**
+     * Players who left or were kicked while a hand they were dealt into was still live. They stay seated
+     * (folded) so the hand's pots and ordering keep resolving against them, and are dropped when the
+     * hand is cleared.
+     */
+    val pendingRemovals: Set<Int> = emptySet(),
 ) : Wireable<WireablePokerTableState> {
 
     companion object {
@@ -59,19 +69,30 @@ data class PokerTableState(
             val players = state.players.map { it.restore() }
             val playerMap = players.associateBy { it.id }
 
+            // A round that references a player no longer seated can't be restored (records written before
+            // removals were deferred). Drop the hand rather than brick the table.
+            val roundState = state.roundState?.takeIf { round ->
+                val referenced = round.players + round.pots.flatMap { it.betsByPlayer.keys }
+                (referenced.all { it in playerMap }).also { ok ->
+                    if (!ok) log.error("Table {} round references unseated players; discarding the hand", state.id)
+                }
+            }
+
             // Infer gameStatus for records written before this field existed (roundState present but gameStatus defaulted to WAITING)
             val gameStatus = when {
-                state.roundState != null && state.turnTimeRemainingMs != null -> GameStatus.PAUSED
-                state.roundState != null && state.gameStatus == GameStatus.WAITING -> GameStatus.RUNNING
+                roundState == null && state.roundState != null -> GameStatus.WAITING
+                roundState != null && state.turnTimeRemainingMs != null -> GameStatus.PAUSED
+                roundState != null && state.gameStatus == GameStatus.WAITING -> GameStatus.RUNNING
                 else -> state.gameStatus
             }
 
             return PokerTableState(
                 id = state.id,
                 players = players.toMutableList(),
-                playerOrdering = PlayerOrdering.restore(state.playerOrdering, players),
+                // Table-level positions index the participating players, as clearRoundState computes them.
+                playerOrdering = PlayerOrdering.restore(state.playerOrdering, players.participating()),
                 blinds = state.blinds,
-                roundState = state.roundState?.let { PokerRoundState.restore(it, playerMap) },
+                roundState = roundState?.let { PokerRoundState.restore(it, playerMap) },
                 config = state.config,
                 gameStatus = gameStatus,
                 readyPlayers = state.readyPlayers.toSet(),
@@ -81,6 +102,7 @@ data class PokerTableState(
                 roundsSinceLastEscalation = state.roundsSinceLastEscalation,
                 initialPlayerCount = state.initialPlayerCount,
                 activeVotes = state.activeVotes,
+                pendingRemovals = state.pendingRemovals.filter { it in playerMap }.toSet(),
             )
         }
     }
@@ -100,5 +122,6 @@ data class PokerTableState(
         roundsSinceLastEscalation = roundsSinceLastEscalation,
         initialPlayerCount = initialPlayerCount,
         activeVotes = activeVotes,
+        pendingRemovals = pendingRemovals.toList(),
     )
 }

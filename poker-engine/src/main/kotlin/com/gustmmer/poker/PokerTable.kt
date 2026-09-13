@@ -11,9 +11,16 @@ import kotlin.random.nextInt
 @Serializable
 data class Blinds(val big: Int, val small: Int) {
     companion object {
-        /** Initial blinds derived from the starting stack: big = 2%, small = 1%. */
-        fun initial(startingChips: Int) = Blinds(big = startingChips / 50, small = startingChips / 100)
+        /** Initial blinds: the configured big blind (small = half), else big = 2% of the stack, small = 1%. */
+        fun initial(config: TableConfig): Blinds = config.startingBigBlind
+            ?.let { Blinds(big = it, small = it / 2) }
+            ?: Blinds(big = config.startingChips / 50, small = config.startingChips / 100)
     }
+
+    fun escalated(multiplier: Double) = Blinds(
+        big = (big * multiplier).roundToInt(),
+        small = (small * multiplier).roundToInt(),
+    )
 }
 
 class PokerTable(
@@ -52,7 +59,7 @@ class PokerTable(
                 id = id,
                 players = players,
                 playerOrdering = PlayerOrdering.forNewTable(players),
-                blinds = Blinds.initial(config.startingChips),
+                blinds = Blinds.initial(config),
                 roundState = null,
                 config = config,
             )
@@ -81,17 +88,16 @@ class PokerTable(
         val newBlinds: Blinds
         val newRoundsSince: Int
         if (handsPerEscalation > 0 && newRoundsSinceEscalation >= handsPerEscalation) {
-            val multiplier = state.config.blindEscalationMultiplier
-            newBlinds = Blinds(
-                big = (state.blinds.big * multiplier).roundToInt(),
-                small = (state.blinds.small * multiplier).roundToInt(),
-            )
+            newBlinds = state.blinds.escalated(state.config.blindEscalationMultiplier)
             newRoundsSince = 0
         } else {
             newBlinds = state.blinds
             newRoundsSince = newRoundsSinceEscalation
         }
 
+        // Re-derive positions over exactly this hand's players, so blinds and first-to-act never index a
+        // stale list (e.g. one still holding a player eliminated since the ordering was last computed).
+        playerOrdering = playerOrdering.forCurrentHand(roundPlayers)
         val roundState = PokerRoundState.forNewRound(Deck.shuffled(), newBlinds, roundPlayers, playerOrdering)
         val initializedRoundState = PokerRound(roundState).start()
 
@@ -133,6 +139,8 @@ class PokerTable(
         val roundState = state.roundState ?: return null
         val bettingState = roundState.bettingRoundState ?: return null
         val currentPlayer = roundState.playerOrdering.bettingPlayer()
+        // Defensive: the turn only ever rests on a player who owes an action.
+        if (currentPlayer !in bettingState.toAct || !currentPlayer.canBet()) return null
 
         val command = when (currentPlayer.status) {
             PlayerStatus.OFFLINE -> Fold(currentPlayer.id)
@@ -186,17 +194,33 @@ class PokerTable(
         return true
     }
 
+    /**
+     * Removes [playerId] from the table. If a hand they were dealt into is still on the table, they are
+     * folded now (in turn or not) but stay seated until [clearRoundState] — the hand's pots and ordering
+     * reference them, and dropping them early leaves a state that can't be restored.
+     */
     fun kickPlayer(playerId: Int) {
         val player = state.players.find { it.id == playerId } ?: return
 
         val roundState = state.roundState
-        if (roundState != null && roundState.pokerRoundStage.isBettingRound() &&
-            roundState.playerOrdering.bettingPlayer().id == playerId
-        ) {
-            autoPlayForCurrentPlayer()
+        if (roundState != null && roundState.players.any { it.id == playerId }) {
+            state = state.copy(
+                roundState = PokerRound(roundState).forceFold(playerId),
+                pendingRemovals = state.pendingRemovals + playerId,
+            )
+        } else {
+            state.players.remove(player)
+            state = state.copy(readyPlayers = state.readyPlayers - playerId)
         }
+        dirty = true
+    }
 
-        state.players.remove(player)
+    /** Raises the blinds by the table's escalation multiplier, effective from the next hand. */
+    fun increaseBlinds() {
+        state = state.copy(
+            blinds = state.blinds.escalated(state.config.blindEscalationMultiplier),
+            roundsSinceLastEscalation = 0,
+        )
         dirty = true
     }
 
@@ -211,8 +235,12 @@ class PokerTable(
         return state.players.participating().all { it.id in state.readyPlayers }
     }
 
+    /**
+     * Resets every stack and the blinds for a fresh game. A hand still on the table is abandoned — its
+     * bets don't matter once every stack is reset — and players who left during it are dropped.
+     */
     fun restartGame() {
-        check(state.roundState == null) { "Cannot restart while a round is in progress" }
+        state.players.removeAll { it.id in state.pendingRemovals }
 
         state.players.forEach { player ->
             player.removeChips(player.chips)
@@ -221,14 +249,19 @@ class PokerTable(
         }
 
         state = state.copy(
-            blinds = Blinds.initial(state.config.startingChips),
+            blinds = Blinds.initial(state.config),
             playerOrdering = PlayerOrdering.forNewTable(state.players),
             roundsSinceLastEscalation = 0,
             initialPlayerCount = 0,
             gameStatus = GameStatus.WAITING,
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
+            turnTimeRemainingMs = null,
+            roundState = null,
+            activeVotes = emptyList(),
+            pendingRemovals = emptySet(),
         )
+        playerOrdering = state.playerOrdering
         dirty = true
     }
 
@@ -270,6 +303,7 @@ class PokerTable(
         // before they are folded out by elimination. Runs before forNextHand so eliminated players are
         // dropped from the next hand's ordering. Idempotent: already-eliminated players are skipped.
         checkForEliminations()
+        state.players.removeAll { it.id in state.pendingRemovals }
         val nextPlayers = state.players.participating()
         if (nextPlayers.isNotEmpty()) {
             playerOrdering = playerOrdering.forNextHand(nextPlayers)
@@ -280,6 +314,7 @@ class PokerTable(
             gameStatus = GameStatus.WAITING,
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
+            pendingRemovals = emptySet(),
         )
         dirty = true
     }

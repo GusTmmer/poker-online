@@ -96,7 +96,7 @@ class PokerRoundRaisesTest {
     }
 
     @Test
-    fun `minimum raise must be at least big blind or current bet`() {
+    fun `minimum raise must be at least the big blind and the last raise size`() {
         val setup = PokerRoundForTest.setup(Blinds(big = 200, small = 100), "K♥, 6♥, 7♥, 8♦, 9♦")
             .withPlayer(1000, "A♠, 2♠")
             .withPlayer(1000, "K♠, 3♠")
@@ -109,11 +109,11 @@ class PokerRoundRaisesTest {
             assertThrows(IllegalArgumentException::class.java) {
                 raise(2, 150) // Invalid raise (less than big blind)
             }
-            raise(2, 200)
+            raise(2, 200) // to 400: a raise of 200
             assertThrows(IllegalArgumentException::class.java) {
-                raise(0, 200) // Invalid raise (less than current bet == 400)
+                raise(0, 150) // Invalid raise (less than the previous raise of 200)
             }
-            raise(0, 400)
+            raise(0, 400) // to 800
             call(1)
             call(2)
 
