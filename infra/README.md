@@ -228,25 +228,55 @@ account isn't USD.)
 
 > Re-enabling after a trip: re-attach the billing account in the console (Billing → link account).
 
-## Known gap: CI/CD isn't wired up yet
+## CI/CD: push to `main` deploys
 
-A Cloud Build trigger (`build-poker-server`) already exists, firing on push to `main` on the
-`GusTmmer/poker-online` GitHub repo, running as the `poker-build` SA — but it does **not** currently
-redeploy the live service. Two things are missing:
+The `build-poker-server` Cloud Build trigger (push to `main` on `GusTmmer/poker-online`, running as the
+`poker-build` SA) runs [`cloudbuild.yaml`](../cloudbuild.yaml): engine + frontend unit tests → Docker
+build → push `poker-server:$SHORT_SHA` and `:latest` to Artifact Registry → `gcloud run services
+replace` with `infra/cloudrun-service.yaml` pinned to the SHA tag. Logs go to Cloud Logging only (a
+user-managed build SA has no default logs bucket — the failure the trigger's first run hit).
 
-1. It has no `cloudbuild.yaml`, so it runs in bare "autodetect" mode: build the `Dockerfile`, push with
-   an auto-generated tag. It does **not** push to
-   `us-central1-docker.pkg.dev/PROJECT_ID/poker/poker-server` (the path Cloud Run actually reads), and
-   has no step that calls `gcloud run deploy` at all.
-2. Its one real run failed outright on the same logs-bucket error described in §6/§8 above — nobody
-   had set `--default-buckets-behavior`/`logs_bucket` for it.
+One-time setup (mirrored in `terraform/iam.tf`):
 
-To actually finish this: add a `cloudbuild.yaml` with explicit steps (build → push to the correct
-Artifact Registry path → `gcloud run deploy`), fix the trigger's logging config, and grant
-`poker-build` `roles/run.developer` + `roles/iam.serviceAccountUser` on `poker-run` (needed to deploy
-as that runtime SA) — a real permission expansion for that SA, worth doing deliberately rather than as
-a drive-by. Until then, ship a new build the way this deploy did it: §6's `gcloud builds submit` +
-`gcloud run services replace`.
+```bash
+export PROJECT_ID=pokeronline-499416
+export BUILD_SA="poker-build@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Deploying updates the Cloud Run service and acts as its runtime identity.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${BUILD_SA}" --role=roles/run.developer --condition=None
+gcloud iam service-accounts add-iam-policy-binding "poker-run@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --member="serviceAccount:${BUILD_SA}" --role=roles/iam.serviceAccountUser
+
+# Switch the trigger from Dockerfile autodetect to the pipeline.
+gcloud builds triggers update github build-poker-server --region=global --build-config=cloudbuild.yaml
+```
+
+Watch a deploy: `gcloud builds list --limit=3`, then `gcloud run services describe poker-server
+--region=us-central1 --format='value(spec.template.spec.containers[0].image)'` shows the SHA tag.
+
+## Kill-switch invoker permission
+
+The function's Eventarc trigger pushes each budget message as `billing-killswitch@…`, which needs
+`roles/run.invoker` on the function's underlying Cloud Run service — without it every notification is
+rejected with a 403 and billing is never capped (found in production logs: every message since the
+function was created had been refused). Mirrored in `terraform/budget.tf`.
+
+```bash
+gcloud run services add-iam-policy-binding billing-killswitch --region=us-central1 \
+  --member="serviceAccount:billing-killswitch@${PROJECT_ID}.iam.gserviceaccount.com" --role=roles/run.invoker
+
+# Redeploy the (gen2 CloudEvent) function source — same flags as the deploy above.
+gcloud functions deploy billing-killswitch --gen2 --runtime=python312 --region=us-central1 \
+  --source=infra/billing-killswitch --entry-point=stop_billing --trigger-topic=billing-alerts \
+  --service-account="billing-killswitch@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --trigger-service-account="billing-killswitch@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --build-service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}" \
+  --set-env-vars=GCP_PROJECT_ID="$PROJECT_ID"
+
+# Harmless check: an under-budget message must log "under budget … no action" with HTTP 200.
+gcloud pubsub topics publish billing-alerts --message='{"costAmount":0,"budgetAmount":5}'
+```
 
 ## Gotchas hit on the real deploy
 

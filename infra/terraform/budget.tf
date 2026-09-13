@@ -66,6 +66,9 @@ resource "google_cloudfunctions2_function" "killswitch" {
 
   event_trigger {
     trigger_region = var.region
+    # Eventarc pushes each message to the function as this identity, which must be allowed to invoke it
+    # (below) — without that every budget notification is rejected with a 403 and nothing ever runs.
+    service_account_email = google_service_account.killswitch.email
     event_type     = "google.cloud.pubsub.topic.v1.messagePublished"
     pubsub_topic   = google_pubsub_topic.billing.id
     retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
@@ -103,4 +106,11 @@ resource "google_billing_budget" "budget" {
   all_updates_rule {
     pubsub_topic = google_pubsub_topic.billing.id
   }
+}
+
+resource "google_cloud_run_service_iam_member" "killswitch_invoker" {
+  location = var.region
+  service  = google_cloudfunctions2_function.killswitch.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.killswitch.email}"
 }

@@ -149,4 +149,6 @@ e2e/
 
 **Stateless — scales horizontally, but kept cost-bounded.** All cross-instance coordination lives off-instance (Path B, see `docs/path-b-plan.md` + `docs/architecture-gcp.md`): WebSocket fan-out via **Firestore snapshot listeners** (`TableUpdateBus`), turn + vote timers via **Cloud Tasks** (`TaskScheduler` → `/internal/*`), and vote state inside `PokerTableState.activeVotes`. So any instance can serve any player. The Cloud Run manifest pins `maxScale=3` purely as a **cost ceiling** (not a correctness one) and `minScale=0` for scale-to-zero. `MultiInstanceTest` proves a commit on one instance fans out to a socket on another. The only per-instance state left is each instance's own live WebSocket sockets + their bus subscriptions (correct by design), and ephemeral toasts (`broadcastMessage`) are instance-local (cosmetic; the underlying state still fans out via the bus).
 
+**CI/CD.** Pushing to `main` runs `cloudbuild.yaml` via the `build-poker-server` Cloud Build trigger: unit tests → Docker build → push `poker-server:$SHORT_SHA` → `gcloud run services replace infra/cloudrun-service.yaml` pinned to that tag. One-time IAM/trigger setup is in `infra/README.md`.
+
 **Firestore TTL.** Documents carry an `expiresAt` Firestore `Timestamp` field (12h out); the `tables` collection needs a matching native TTL policy configured for cleanup to actually happen.

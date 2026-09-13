@@ -1,0 +1,56 @@
+# Continuous deployment for poker-server. Run by the `build-poker-server` Cloud Build trigger on every
+# push to `main` (service account: poker-build). Test → build → push → deploy:
+#
+#   1. engine + frontend unit tests (the Firestore-emulator server tests need Docker-in-Docker; skipped)
+#   2. build the Dockerfile (bundles the SPA and the server)
+#   3. push to the Artifact Registry path Cloud Run reads, tagged with the commit SHA and `latest`
+#   4. `gcloud run services replace` with infra/cloudrun-service.yaml, pinned to the SHA tag — the
+#      manifest stays the enforced shape of the service, and a new tag always rolls a new revision.
+#
+# Manual run (SHORT_SHA is only set for triggered builds):
+#   gcloud builds submit --config=cloudbuild.yaml --substitutions=SHORT_SHA=$(git rev-parse --short HEAD) \
+#     --service-account=projects/pokeronline-499416/serviceAccounts/poker-build@pokeronline-499416.iam.gserviceaccount.com
+steps:
+  - id: engine-tests
+    name: gradle:8.5-jdk21
+    entrypoint: gradle
+    args: [':poker-engine:test', '--no-daemon']
+
+  - id: frontend-tests
+    name: node:22-alpine
+    dir: frontend
+    entrypoint: sh
+    args: ['-c', 'npm ci && npx tsc -b && npx vitest run']
+    waitFor: ['-']
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_IMAGE}:${SHORT_SHA}', '-t', '${_IMAGE}:latest', '.']
+    waitFor: ['engine-tests', 'frontend-tests']
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '${_IMAGE}']
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        sed "s#image: .*/poker-server:.*#image: ${_IMAGE}:${SHORT_SHA}#" infra/cloudrun-service.yaml > /workspace/service.yaml
+        grep -q "${_IMAGE}:${SHORT_SHA}" /workspace/service.yaml
+        gcloud run services replace /workspace/service.yaml --region=${_REGION}
+
+substitutions:
+  _REGION: us-central1
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/poker/poker-server
+
+options:
+  dynamicSubstitutions: true
+  # A user-managed build service account has no default logs bucket; log to Cloud Logging only.
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1800s

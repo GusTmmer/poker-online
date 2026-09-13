@@ -27,3 +27,22 @@ resource "google_secret_manager_secret_iam_member" "internal_access" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.run.email}"
 }
+
+# ── Continuous deployment (cloudbuild.yaml) ────────────────────────────────────
+# The `build-poker-server` trigger runs as poker-build (created by hand; see infra/README.md). Besides
+# pushing images, deploying needs to update the Cloud Run service and to act as its runtime identity.
+data "google_service_account" "build" {
+  account_id = "poker-build"
+}
+
+resource "google_project_iam_member" "build_run_developer" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${data.google_service_account.build.email}"
+}
+
+resource "google_service_account_iam_member" "build_acts_as_run" {
+  service_account_id = google_service_account.run.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${data.google_service_account.build.email}"
+}
