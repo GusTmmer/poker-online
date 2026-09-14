@@ -10,6 +10,9 @@ export interface SeatEntry {
   seatObj: SeatObjects
   miniCards: Container
   miniCardsVisible: boolean
+  /** The player's stack drawn as chips on the felt; redrawn only when [pileCount] changes. */
+  pile: Container
+  pileCount: number
 }
 
 export interface CommCardEntry {
@@ -26,8 +29,8 @@ export interface CommCardEntry {
 
 export interface CommDeck { sprite: Container; elapsed: number; hideAt: number }
 
-export interface FlyingChip { sprite: Container; fromX: number; fromY: number; elapsed: number; duration: number; done: boolean }
-export interface WinnerChip { sprite: Container; toX: number; toY: number; elapsed: number; delay: number; duration: number; done: boolean }
+export interface FlyingChip { sprite: Container; fromX: number; fromY: number; toX: number; toY: number; delay: number; elapsed: number; duration: number; done: boolean }
+export interface WinnerChip { sprite: Container; fromX: number; fromY: number; toX: number; toY: number; elapsed: number; delay: number; duration: number; done: boolean }
 export interface FloatingDelta { label: Text; y0: number; elapsed: number }
 
 export interface DealCard {
@@ -62,6 +65,7 @@ export interface SceneState {
   root: Container
   seatsLayer: Container
   emptySeatsLayer: Container
+  chipPilesLayer: Container
   miniCardsLayer: Container
   communityRow: Container
   potContainer: Container
@@ -77,6 +81,13 @@ export interface SceneState {
   tweens: Tween[]
   bursts: ActionBurst[]
   runout: Runout | null
+  /**
+   * Pacing hold: warm frames arriving before [holdUntil] (a performance.now() time) wait in [held]
+   * and play one by one, so an action never lands on top of a deal, a street, or the previous action.
+   */
+  held: Frame[]
+  holdUntil: number
+  holdTimer: ReturnType<typeof setTimeout> | null
   /**
    * Phone layout: simplified card faces, pocket-only showdown rows placed on the table side of
    * each seat, and badges beside the avatar — so seats fit a short screen.

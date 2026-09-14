@@ -33,19 +33,35 @@ export function chipSprite(): Container {
   return c
 }
 
-export function spawnFlyingChip(scene: SceneState, fromX: number, fromY: number) {
-  const s = chipSprite()
-  s.position.set(fromX, fromY)
-  scene.animLayer.addChild(s)
-  scene.flyingChips.push({ sprite: s, fromX, fromY, elapsed: 0, duration: 550, done: false })
+interface Point { x: number; y: number }
+
+/**
+ * A bet sliding into the middle: a few chips leave the player's pile one after another
+ * and land on the pot — more chips for a bigger bet (1 per doubling of the big blind, up to 5).
+ */
+export function spawnBetChips(scene: SceneState, from: Point, to: Point, amount: number, bigBlind: number) {
+  const count = Math.max(1, Math.min(5, 1 + Math.floor(Math.log2(Math.max(1, amount / Math.max(1, bigBlind))))))
+  for (let i = 0; i < count; i++) {
+    const s = chipSprite()
+    s.alpha = 0
+    s.position.set(from.x, from.y)
+    scene.animLayer.addChild(s)
+    // A little scatter so several chips don't stack into one sprite.
+    const jitterX = (i - (count - 1) / 2) * 5
+    scene.flyingChips.push({
+      sprite: s, fromX: from.x, fromY: from.y, toX: to.x + jitterX, toY: to.y - i * 2,
+      delay: i * 70, elapsed: 0, duration: 520, done: false,
+    })
+  }
 }
 
-export function spawnWinnerChips(scene: SceneState, toX: number, toY: number) {
+/** The pot pushed to a winner: chips burst out of the middle and pour onto their pile. */
+export function spawnWinnerChips(scene: SceneState, from: Point, to: Point) {
   for (let i = 0; i < 5; i++) {
     const s = chipSprite()
     s.alpha = 0; s.scale.set(0.4)
     scene.animLayer.addChild(s)
-    scene.winnerChips.push({ sprite: s, toX, toY, elapsed: 0, delay: i * 90, duration: 700, done: false })
+    scene.winnerChips.push({ sprite: s, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, elapsed: 0, delay: i * 90, duration: 700, done: false })
   }
 }
 

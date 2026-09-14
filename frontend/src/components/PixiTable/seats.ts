@@ -1,7 +1,8 @@
 import { Graphics } from 'pixi.js'
 import type { GameStateUpdate, PlayerView } from '../../api/types'
 import { hex } from '../../theme'
-import { SEAT_STADIUM, CARD_STADIUM, slotPosition } from './layout'
+import { SEAT_STADIUM, CARD_STADIUM, CHIP_STADIUM, CHIP_ALONG, slotPosition } from './layout'
+import { drawPile, makePile, pileChipCount, pileUnit } from './chipPile'
 import { buildSeat, updateSeat } from './drawSeat'
 import { oddsAt } from '../../game/runoutOdds'
 import { makeCardBackPair, makeCardFacePair, makeMiniCardBackPair, CARD_H, PAIR_W } from './drawCard'
@@ -21,6 +22,17 @@ export function seatPos(scene: SceneState, playerId: number) {
   const mySlot    = slotMap.get(scene.myPlayerId) ?? 0
   const seatCount = Math.max(scene.maxPlayers, state.players.length, 2)
   return slotPosition(slotMap.get(playerId) ?? 0, mySlot, seatCount, SEAT_STADIUM)
+}
+
+/** Where a player's chip pile sits on the felt — bets leave from here and winnings land here. */
+export function pilePos(scene: SceneState, playerId: number) {
+  const state = scene.lastApplied!
+  const slotMap   = getSlotMap(state.players)
+  const mySlot    = slotMap.get(scene.myPlayerId) ?? 0
+  const seatCount = Math.max(scene.maxPlayers, state.players.length, 2)
+  const pos = slotPosition(slotMap.get(playerId) ?? 0, mySlot, seatCount, CHIP_STADIUM, CHIP_ALONG)
+  // Aim at the top of a mid-sized pile rather than the felt under it.
+  return { x: pos.x, y: pos.y - 8 }
 }
 
 // ─── empty seats ──────────────────────────────────────────────────────────────
@@ -55,6 +67,7 @@ export function updateSeats(
   const seatCount = Math.max(maxPlayers, players.length, 2)
   const occupied  = new Set<number>()
   const runoutEquities = scene.runout ? oddsAt(gameState.runoutOdds, scene.runout.boardShown) : null
+  const unit = pileUnit(gameState)
 
   for (const player of players) {
     const slot = slotMap.get(player.id)!
@@ -80,8 +93,20 @@ export function updateSeats(
       miniCards.visible = false
       scene.miniCardsLayer.addChild(miniCards)
 
-      entry = { slot, playerId: player.id, seatObj, miniCards, miniCardsVisible: false }
+      const pile = makePile()
+      scene.chipPilesLayer.addChild(pile)
+
+      entry = { slot, playerId: player.id, seatObj, miniCards, miniCardsVisible: false, pile, pileCount: -1 }
       scene.seats.set(player.id, entry)
+    }
+
+    // Seats move when players join or leave, so the pile is re-placed every time; it is redrawn only when it changes size.
+    const pilePosition = slotPosition(slot, mySlot, seatCount, CHIP_STADIUM, CHIP_ALONG)
+    entry.pile.position.set(pilePosition.x, pilePosition.y)
+    const pileCount = pileChipCount(player.chips, unit)
+    if (pileCount !== entry.pileCount) {
+      entry.pileCount = pileCount
+      drawPile(entry.pile, pileCount)
     }
 
     const isNextToAct = !scene.isDealing && !scene.isCommunityDealing && player.id === nextPlayerIdToAct
@@ -103,8 +128,9 @@ export function updateSeats(
       { flipLabels, compact: scene.compact },
     )
 
-    // Hide mini card backs at showdown — the hand section already renders the cards.
-    const showMini = !scene.isDealing && roundInProgress && player.isActive && player.chips > 0 && roundStage !== 'SHOWDOWN'
+    // Hide mini card backs at showdown — the hand section already renders the cards. An all-in player (0 chips)
+    // is still in the hand, so their cards stay in front of them.
+    const showMini = !scene.isDealing && roundInProgress && player.isActive && roundStage !== 'SHOWDOWN'
     if (showMini !== entry.miniCardsVisible) {
       entry.miniCardsVisible = showMini
       if (showMini) {
@@ -125,6 +151,7 @@ export function updateSeats(
     if (!slotMap.has(id)) {
       scene.seatsLayer.removeChild(entry.seatObj.root)
       scene.miniCardsLayer.removeChild(entry.miniCards)
+      scene.chipPilesLayer.removeChild(entry.pile)
       scene.seats.delete(id)
     }
   }

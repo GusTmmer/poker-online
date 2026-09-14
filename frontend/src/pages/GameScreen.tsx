@@ -85,7 +85,7 @@ export function GameScreen() {
   const { tableId, myPlayerId, tableInfo } = useSession()
   const { gameState, bus, connectionState, toasts, dismissToast } = useGameSocket(tableId)
   useStateLogger(gameState)
-  // True while the canvas plays an all-in runout; the next hand waits for the reveal.
+  // True while the canvas lags the live state (an all-in runout, or actions held until the cards land); the next hand waits.
   const [revealing, setRevealing] = useState(false)
   const viewport = useViewportMode()
 

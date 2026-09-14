@@ -212,12 +212,20 @@ export interface SeatShowdown {
 }
 
 function buildHandSection(section: Container, { hand = null, pocket: pocketCards = [], equity }: SeatShowdown, compact: boolean) {
+  // One heading over the cards: the hand's name once the board is out, or — while an all-in board is still
+  // being run out — the chance of winning. Kept above the row rather than beside it, so the row never
+  // grows sideways into a neighbouring seat.
   let rowY = 0
   if (hand) {
     const nameT = new Text({ text: hand.name, style: STYLE_HAND_NAME })
     nameT.anchor.set(0.5, 0)
     section.addChild(nameT)
     rowY = nameT.height + 3
+  } else if (equity) {
+    const pill = makeEquityPill(equity)
+    pill.x = -pill.width / 2
+    section.addChild(pill)
+    rowY = pill.height + 3
   }
 
   const row = new Container()
@@ -254,21 +262,11 @@ function buildHandSection(section: Container, { hand = null, pocket: pocketCards
 
   for (const card of board) place(makeMiniCard(card, false, compact))
 
-  if (equity) {
-    const pill = makeEquityPill(equity)
-    pill.x = x + EQUITY_GAP - MINI_GAP
-    pill.y = (MINI_H - pill.height) / 2
-    row.addChild(pill)
-    x += EQUITY_GAP - MINI_GAP + pill.width + MINI_GAP
-  }
-
   const width = x - MINI_GAP
   const scale = pocket.length + board.length >= 7 ? WIDE_ROW_SCALE : 1
   row.scale.set(scale)
   row.x = (-width * scale) / 2
 }
-
-const EQUITY_GAP = 6
 
 /** The broadcast-style win percentage: gold on a dark glass pill, brightest for the hand in front. */
 function makeEquityPill({ value, leading }: SeatEquity): Container {
@@ -415,7 +413,9 @@ export function updateSeat(
   s.isNextToAct = isNextToAct
 
   const faded = player.status === 'OFFLINE' || player.status === 'ELIMINATED' || player.status === 'IDLE'
-  s.root.alpha = faded ? 0.45 : 1
+  // Out of this hand: dimmed until the next deal, so it's clear at a glance who is still playing.
+  const folded = roundInProgress && !player.isActive
+  s.root.alpha = faded ? 0.45 : folded ? 0.55 : 1
 
   const size = isMe ? SIZE_ME : SIZE_OTHER
 
@@ -433,8 +433,10 @@ export function updateSeat(
     s.winHaloGfx.visible = false
   }
 
-  // Bet tag — a chip pip beside the amount, in a dark glass pill
-  if (player.currentBet > 0) {
+  // Bet tag — a chip pip beside the amount, in a dark glass pill. Once cards are tabled the bets are all in
+  // the pot, and the tag would sit on top of the showdown row (below the avatar for top seats), so it goes.
+  const tabled = showdown.hand != null || showdown.pocket != null
+  if (player.currentBet > 0 && !tabled) {
     s.betText.text = player.currentBet.toLocaleString('en-US')
     const bg = s.betTag.children[0] as Graphics
     bg.clear()

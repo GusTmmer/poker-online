@@ -33,17 +33,18 @@ data class WireablePlayer(
 fun WireablePlayer.restore(): Player {
     val player = Player(id, name, botPersonality)
     player.addChips(chips)
+    // Cards first: setPocketCards marks the player ACTIVE, so the statuses below must be applied after it —
+    // otherwise an eliminated player holding a stale hand would come back as still in the hand.
+    if (pocketCards.isNotEmpty()) {
+        player.setPocketCards(pocketCards)
+    }
     when (status) {
         PlayerStatus.OFFLINE -> player.setAsOffline()
         PlayerStatus.IDLE -> player.setAsIdle()
         PlayerStatus.ELIMINATED -> player.setAsEliminated()
         PlayerStatus.ONLINE -> {}
     }
-    if (pocketCards.isNotEmpty()) {
-        player.setPocketCards(pocketCards)
-    }
-    // roundStatus after setPocketCards is ACTIVE; fold if the player had folded (but isn't eliminated — setAsEliminated already sets FOLDED)
-    if (roundStatus == RoundStatus.FOLDED && status != PlayerStatus.ELIMINATED) {
+    if (roundStatus == RoundStatus.FOLDED) {
         player.fold()
     }
     return player
@@ -95,6 +96,7 @@ class Player(
     fun setAsEliminated() {
         status = PlayerStatus.ELIMINATED
         roundStatus = RoundStatus.FOLDED
+        pocketCards = emptyList()
     }
 
     fun addChips(chips: Int) {

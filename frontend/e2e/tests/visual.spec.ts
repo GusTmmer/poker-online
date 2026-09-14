@@ -194,7 +194,7 @@ test.describe('visual: in-round', () => {
     }
   })
 
-  test('control bar: 0-chip player sees only the corner menu', async ({ page }) => {
+  test('control bar: 0-chip player sees a waiting label and no actions', async ({ page }) => {
     const bot1 = await BotClient.create()
 
     try {

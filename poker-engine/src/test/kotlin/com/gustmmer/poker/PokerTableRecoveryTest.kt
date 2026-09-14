@@ -1,5 +1,6 @@
 package com.gustmmer.poker
 
+import com.gustmmer.poker.deck.Card
 import com.gustmmer.poker.persistence.MemoryBasedPokerTablePersistence
 import com.gustmmer.poker.round.Call
 import com.gustmmer.poker.round.PokerRoundStage
@@ -81,6 +82,36 @@ class PokerTableRecoveryTest {
         val stored = reload(3).currentState.roundState!!
         assertEquals(round.playerOrdering.smallBlindPlayer().id, stored.playerOrdering.smallBlindPlayer().id)
         assertEquals(round.playerOrdering.bettingPlayer().id, stored.playerOrdering.bettingPlayer().id)
+    }
+
+    @Test
+    fun `an eliminated player restored with a stale hand stays out of the hand`() {
+        // Tables stored before elimination dropped the last hand's cards still carry them; restoring used to
+        // mark such a player ACTIVE again, so their old cards were revealed at the next showdown.
+        val stale = WireablePlayer(
+            id = 1, name = "P1", status = PlayerStatus.ELIMINATED, roundStatus = RoundStatus.FOLDED,
+            pocketCards = Card.cards.take(2), chips = 0,
+        )
+        val restored = stale.restore()
+        assertTrue(restored.isEliminated())
+        assertFalse(restored.isActive())
+    }
+
+    @Test
+    fun `a busted player's cards are cleared once the hand ends`() {
+        val table = table(5, 3)
+        table.newPokerRound()
+        table.commit()
+
+        val t = reload(5)
+        t.currentState.players.single { it.id == 1 }.let { it.removeChips(it.chips) }
+        t.clearRoundState()
+        t.commit()
+
+        val busted = reload(5).currentState.players.single { it.id == 1 }
+        assertTrue(busted.isEliminated())
+        assertFalse(busted.isActive())
+        assertTrue(busted.pocketCards.isEmpty())
     }
 
     @Test

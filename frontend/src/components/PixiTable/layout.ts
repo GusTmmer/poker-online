@@ -26,6 +26,11 @@ export const FELT_STADIUM: StadiumGeometry = { w: FELT_W, h: FELT_H }
 export const SEAT_STADIUM: StadiumGeometry = { w: FELT_W + 2 * SEAT_GAP, h: FELT_H + 2 * SEAT_GAP }
 export const CARD_STADIUM: StadiumGeometry = { w: FELT_W - 2 * CARD_INSET, h: FELT_H - 2 * CARD_INSET }
 
+// Each player's chip pile sits on the felt just inside the rail, slid along it beside their cards.
+export const CHIP_INSET = 14
+export const CHIP_ALONG = -50  // px along the rail (negative = counter-clockwise, left of the bottom seat)
+export const CHIP_STADIUM: StadiumGeometry = { w: FELT_W - 2 * CHIP_INSET, h: FELT_H - 2 * CHIP_INSET }
+
 export interface SlotPosition {
   x: number  // logical px from canvas center
   y: number
@@ -63,9 +68,14 @@ export function pointOnStadium({ w, h }: StadiumGeometry, fraction: number): { x
  * Returns the position for `slot` on the given stadium geometry,
  * rotated so that `mySlot` always ends up at the bottom (fraction = 0).
  */
-export function slotPosition(slot: number, mySlot: number, seatCount: number, stadium: StadiumGeometry): SlotPosition {
+export function slotPosition(
+  slot: number, mySlot: number, seatCount: number, stadium: StadiumGeometry,
+  /** Slide the point this many px along the perimeter from the slot's own position. */
+  alongPx = 0,
+): SlotPosition {
   const displayed = (slot - mySlot + seatCount) % seatCount
-  const pt = pointOnStadium(stadium, displayed / seatCount)
+  const perimeter = 2 * (stadium.w - stadium.h) + Math.PI * stadium.h
+  const pt = pointOnStadium(stadium, displayed / seatCount + alongPx / perimeter)
   const angleDeg = (Math.atan2(pt.y, pt.x) * 180) / Math.PI
   return { x: pt.x, y: pt.y, angleDeg }
 }

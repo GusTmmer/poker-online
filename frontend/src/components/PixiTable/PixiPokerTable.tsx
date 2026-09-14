@@ -19,11 +19,11 @@ import {
   COMM_SCALE, COMM_GAP, commRowW,
 } from './constants'
 import type { SceneState } from './sceneTypes'
-import { randomPotVariant, updatePot } from './pot'
-import { spawnDelta, spawnFlyingChip, spawnWinnerChips } from './chips'
+import { POT_Y, randomPotVariant, updatePot } from './pot'
+import { spawnBetChips, spawnDelta, spawnWinnerChips } from './chips'
 import { spawnActionBurst } from './burst'
 import { tween, cancelTweens } from './tween'
-import { getSlotMap, refreshSeats, seatPos } from './seats'
+import { getSlotMap, pilePos, refreshSeats, seatPos } from './seats'
 import { tick } from './tick'
 
 // Module map: scene types → ./sceneTypes · constants → ./constants · pot pyramid →
@@ -37,7 +37,10 @@ interface Props {
   bus: FrameBus
   myPlayerId: number
   maxPlayers: number
-  /** Told when an all-in runout starts and finishes, so lobby controls can wait for the reveal. */
+  /**
+   * Told when the canvas starts and stops lagging the live state (an all-in runout being revealed, or actions
+   * held until the cards land), so lobby controls can wait for the table to catch up.
+   */
   onRunoutChange?: (playing: boolean) => void
   /** Phone layout (short screen): simplified cards and seats that fit it — see [SceneState.compact]. */
   compact?: boolean
@@ -121,13 +124,14 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
       root.addChild(drawTable())
 
       const emptySeatsLayer = new Container()
+      const chipPilesLayer  = new Container()
       const seatsLayer      = new Container()
       const miniCardsLayer  = new Container()
       const potContainer    = new Container()
       const communityRow    = new Container()
       const myCardsContainer= new Container()
       const animLayer       = new Container()
-      root.addChild(emptySeatsLayer, seatsLayer, miniCardsLayer, potContainer, communityRow, myCardsContainer, animLayer)
+      root.addChild(emptySeatsLayer, chipPilesLayer, seatsLayer, miniCardsLayer, potContainer, communityRow, myCardsContainer, animLayer)
 
       const ticker = new Ticker()
       ticker.add((t) => { if (sceneRef.current) tick(sceneRef.current, t.deltaMS) })
@@ -135,11 +139,11 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
 
       const scene: SceneState = {
         app, root,
-        seatsLayer, emptySeatsLayer, miniCardsLayer,
+        seatsLayer, emptySeatsLayer, chipPilesLayer, miniCardsLayer,
         communityRow, potContainer, myCardsContainer, animLayer,
         seats: new Map(), commCards: [], commDeck: null,
         flyingChips: [], winnerChips: [], floatingDeltas: [], dealCards: [],
-        tweens: [], bursts: [], runout: null, compact: compactRef.current, dealEndsAt: 0,
+        tweens: [], bursts: [], runout: null, held: [], holdUntil: 0, holdTimer: null, compact: compactRef.current, dealEndsAt: 0,
         ticker, isDealing: false, isCommunityDealing: false,
         lastApplied: null, myPlayerId: myPlayerIdRef.current, maxPlayers: maxPlayersRef.current,
         retainedShowdownHands: new Map(), retainedPocketCards: new Map(),
@@ -185,6 +189,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
         unsubscribe()
         resizeRef.current = null
         if (scene.runout) scene.runout.timers.forEach(clearTimeout)
+        if (scene.holdTimer) clearTimeout(scene.holdTimer)
         window.removeEventListener('resize', onResize)
         resizeObserver.disconnect()
         dprQuery?.removeEventListener('change', onDprChange)
@@ -275,6 +280,7 @@ function rebuildForLayout(scene: SceneState) {
   for (const entry of scene.seats.values()) {
     scene.seatsLayer.removeChild(entry.seatObj.root)
     scene.miniCardsLayer.removeChild(entry.miniCards)
+    scene.chipPilesLayer.removeChild(entry.pile)
   }
   scene.seats.clear()
   scene.myCardsPocketKey = ''
@@ -387,6 +393,7 @@ function renderCommunity(scene: SceneState, cards: string[], prevCards: string[]
   const totalMs = DECK_DELAY_MS + SLIDE_MS + FLIP_PAUSE_MS +
     (newCards.length - 1) * FLIP_STAGGER_MS + FLIP_HALF_MS * 2 + 100
   scene.isCommunityDealing = true
+  holdFor(scene, totalMs + STAGE_BEAT_MS)
   setTimeout(() => {
     scene.isCommunityDealing = false
     // Re-evaluate seats now that the deal is over — turn halos are suppressed
@@ -413,7 +420,8 @@ function startDeal(scene: SceneState) {
   for (let i = 0; i < seatCount; i++) {
     const slot = (sbSlot + i) % seatCount
     const p = gameState.players.find((pl) => (slotMap.get(pl.id) ?? -1) === slot)
-    if (p?.isActive && p.chips > 0) ordered.push(slot)
+    // Everyone in the hand is dealt in — including a player whose blind put them all in.
+    if (p?.isActive) ordered.push(slot)
   }
   if (ordered.length < 2) return
 
@@ -443,6 +451,7 @@ function startDeal(scene: SceneState) {
 
   const crossfadeAt = (ordered.length * 2 - 1) * DEAL_INTERVAL_MS + DEAL_FLIGHT_MS + 250
   scene.dealEndsAt = performance.now() + crossfadeAt
+  holdFor(scene, crossfadeAt + STAGE_BEAT_MS)
   setTimeout(() => {
     for (const dc of scene.dealCards) {
       tween(scene, dc.sprite, { alpha: 0 }, 400, 0, () => scene.animLayer.removeChild(dc.sprite))
@@ -458,7 +467,7 @@ function startDeal(scene: SceneState) {
     // animation and won't show again until the next WS message otherwise.
     for (const [, entry] of scene.seats) {
       const player = gameState.players.find((p) => p.id === entry.playerId)
-      if (player?.isActive && player.chips > 0 && gameState.roundStage != null) {
+      if (player?.isActive && gameState.roundStage != null) {
         entry.miniCardsVisible = true
         entry.miniCards.visible = true
         tween(scene, entry.miniCards, { alpha: 1 }, 300)
@@ -476,7 +485,7 @@ function startDeal(scene: SceneState) {
 // clearing, the next hand) queue and replay in order afterwards.
 
 const RUNOUT_LEAD_MS = 700    // tabled cards on display before the first street
-const RUNOUT_PAUSE_MS = 1000  // beat after each street lands
+const RUNOUT_PAUSE_MS = 2000  // beat after each street lands — the tension before the next card
 const STREET_ENDS = [3, 4, 5]
 
 /** Kinds held back until the board is out: they reveal the result. */
@@ -491,6 +500,17 @@ function processFrame(scene: SceneState, frame: Frame, onRunout: RunoutListener)
     abortRunout(scene, onRunout)
   }
 
+  if (frame.cold) {
+    // A reconnect snapshot supersedes anything still waiting its turn.
+    clearHold(scene)
+    syncPresenting(scene, onRunout)
+  } else if (scene.held.length > 0 || performance.now() < scene.holdUntil) {
+    scene.held.push(frame)
+    syncPresenting(scene, onRunout)
+    scheduleHeld(scene, onRunout)
+    return
+  }
+
   const streets = frame.cold ? [] : runoutStreets(scene, frame.state)
   if (streets.length > 0) {
     startRunout(scene, frame, streets, onRunout)
@@ -498,7 +518,59 @@ function processFrame(scene: SceneState, frame: Frame, onRunout: RunoutListener)
   }
 
   applySnapshot(scene, frame.state, frame.cold)
-  if (!frame.cold) for (const event of frame.events) handleEvent(scene, event)
+  if (frame.cold) return
+  for (const event of frame.events) handleEvent(scene, event)
+  if (frame.events.some((e) => ACTION_EVENTS.has(e.kind))) holdFor(scene, ACTION_BEAT_MS)
+}
+
+// ─── pacing hold ────────────────────────────────────────────────────────────────
+// The server moves on the moment an action commits, so a bot can fold while the cards are
+// still flying out, or two players can act inside one animation. Frames that arrive while
+// the table is mid-deal, mid-street or still showing the last action wait here and replay
+// one at a time once it settles. Only the canvas waits — the control bar reads live state.
+
+/** Settle time after a deal or a street lands before the next action plays. */
+const STAGE_BEAT_MS = 350
+/** Time an action's callout owns the table before the next one plays. */
+const ACTION_BEAT_MS = 650
+const ACTION_EVENTS = new Set<GameEvent['kind']>(['player_folded', 'player_raised', 'player_all_in', 'player_bet'])
+
+/**
+ * Tells the lobby controls whether the canvas is still behind the live state — a runout being revealed or
+ * frames waiting their turn — so Ready/Start (and a game-over result) never show before the table does.
+ */
+function syncPresenting(scene: SceneState, onRunout: RunoutListener) {
+  onRunout(scene.runout != null || scene.held.length > 0)
+}
+
+/** Holds warm frames for at least [ms] from now. */
+function holdFor(scene: SceneState, ms: number) {
+  scene.holdUntil = Math.max(scene.holdUntil, performance.now() + ms)
+}
+
+function clearHold(scene: SceneState) {
+  if (scene.holdTimer) clearTimeout(scene.holdTimer)
+  scene.holdTimer = null
+  scene.held = []
+  scene.holdUntil = 0
+}
+
+function scheduleHeld(scene: SceneState, onRunout: RunoutListener) {
+  if (scene.holdTimer) return
+  scene.holdTimer = setTimeout(() => {
+    scene.holdTimer = null
+    if (performance.now() < scene.holdUntil) { scheduleHeld(scene, onRunout); return }
+    const next = scene.held.shift()
+    if (!next) return
+    // Played as if it had just arrived; it may set a fresh hold, which re-arms the timer for the rest.
+    const rest = scene.held
+    scene.held = []
+    processFrame(scene, next, onRunout)
+    if (scene.runout) { scene.runout.queued.push(...rest); return }
+    scene.held = [...scene.held, ...rest]
+    syncPresenting(scene, onRunout)
+    if (scene.held.length > 0) scheduleHeld(scene, onRunout)
+  }, Math.max(0, scene.holdUntil - performance.now()))
 }
 
 /** Street boundaries still to deal when [state] jumps to showdown with undealt board cards. */
@@ -524,7 +596,7 @@ function startRunout(scene: SceneState, frame: Frame, streets: number[], onRunou
     boardShown: scene.shownCommunity.length,
   }
   scene.runout = runout
-  onRunout(true)
+  syncPresenting(scene, onRunout)
 
   applySnapshot(scene, maskRunoutState(prev, frame.state, scene.shownCommunity), false)
   for (const event of frame.events) if (!RESULT_EVENTS.has(event.kind)) handleEvent(scene, event)
@@ -556,14 +628,14 @@ function finishRunout(scene: SceneState, onRunout: RunoutListener) {
   for (const event of runout.final.events) {
     if (RESULT_EVENTS.has(event.kind) && event.kind !== 'community_revealed') handleEvent(scene, event)
   }
-  onRunout(false)
+  syncPresenting(scene, onRunout)
   for (const frame of runout.queued) processFrame(scene, frame, onRunout)
 }
 
 function abortRunout(scene: SceneState, onRunout: RunoutListener) {
   scene.runout?.timers.forEach(clearTimeout)
   scene.runout = null
-  onRunout(false)
+  syncPresenting(scene, onRunout)
 }
 
 /**
@@ -594,7 +666,7 @@ function maskRunoutState(prev: GameStateUpdate | null, next: GameStateUpdate, sh
 function applySnapshot(scene: SceneState, state: GameStateUpdate, cold: boolean) {
   scene.lastApplied = state
 
-  updatePot(scene, state.potTotal, state.roundStage)
+  updatePot(scene, state.potTotal, state.roundStage, state.blinds.big)
 
   // Community: clear on reset; render the whole row instantly on a cold frame
   // (reconnect / first paint). Warm additions arrive via 'community_revealed'.
@@ -630,22 +702,20 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       renderCommunity(scene, scene.lastApplied!.communityCards, scene.shownCommunity)
       break
 
-    case 'player_bet': {
-      const pos = seatPos(scene, event.playerId)
-      spawnFlyingChip(scene, pos.x, pos.y)
+    case 'player_bet':
+      spawnBetChips(scene, pilePos(scene, event.playerId), { x: 0, y: POT_Y }, event.amount, scene.lastApplied!.blinds.big)
       break
-    }
 
     case 'player_raised': {
       const pos = seatPos(scene, event.playerId)
       const verb = event.action === 'bet' ? 'Bet' : 'Raise'
-      spawnActionBurst(scene, pos.x, pos.y, `${verb} ${event.to.toLocaleString('en-US')}`, false)
+      spawnActionBurst(scene, pos.x, pos.y, `${verb} ${event.to.toLocaleString('en-US')}`, 'raise')
       break
     }
 
     case 'player_all_in': {
       const pos = seatPos(scene, event.playerId)
-      spawnActionBurst(scene, pos.x, pos.y, 'ALL IN', true)
+      spawnActionBurst(scene, pos.x, pos.y, 'ALL IN', 'allIn')
       break
     }
 
@@ -656,6 +726,8 @@ function handleEvent(scene: SceneState, event: GameEvent) {
     }
 
     case 'player_folded': {
+      const pos = seatPos(scene, event.playerId)
+      spawnActionBurst(scene, pos.x, pos.y, 'FOLD', 'fold')
       // Muck: glide the folder's mini cards to table center while fading. Take over
       // any in-flight fade that refreshSeats just started (it would otherwise hide
       // the cards mid-flight), and restore their home position/state on completion
@@ -693,10 +765,7 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       if (scene.winnerPlayerIds.size === 0)
         scene.winnerPlayerIds = new Set(event.winners.map((w) => w.playerId))
       refreshSeats(scene)
-      for (const w of event.winners) {
-        const pos = seatPos(scene, w.playerId)
-        spawnWinnerChips(scene, pos.x, pos.y)
-      }
+      for (const w of event.winners) spawnWinnerChips(scene, { x: 0, y: POT_Y }, pilePos(scene, w.playerId))
       break
 
     // Fully reflected by applySnapshot (turn halo via nextPlayerIdToAct, pot via

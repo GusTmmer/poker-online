@@ -88,13 +88,13 @@ export function HomePage() {
   const [tableName, setTableName] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(6)
   const [computerPlayers, setComputerPlayers] = useState(0)
-  const [startingChips, setStartingChips] = useState(1000)
+  const [startingChips, setStartingChips] = useState(20000)
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(30)
   const [blindEscalationOrbits, setBlindEscalationOrbits] = useState(2)
   const [blindEscalationMultiplier, setBlindEscalationMultiplier] = useState(2.0)
-  // null = follow the starting stack (2%), until the player sets it explicitly.
+  // null = follow the starting stack (1%), until the player sets it explicitly.
   const [bigBlindOverride, setBigBlindOverride] = useState<number | null>(null)
-  const bigBlind = bigBlindOverride ?? Math.max(2, Math.floor(startingChips / 50))
+  const bigBlind = bigBlindOverride ?? Math.max(2, Math.floor(startingChips / 100))
 
   const [joinName, setJoinName] = useState('')
   const [tableRef, setTableRef] = useState('')

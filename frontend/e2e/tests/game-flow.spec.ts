@@ -320,8 +320,8 @@ test.describe('all-in runout', () => {
       }
       await expect(page.locator('[data-testid="btn-start-round"]')).not.toBeVisible()
 
-      // …then releases them once the showdown is revealed.
-      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 12_000 })
+      // …then releases them once the showdown is revealed (three streets, each followed by a 2s beat).
+      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 20_000 })
       await expect(page.locator('[data-testid="revealing"]')).not.toBeVisible()
     } finally {
       await bot.dispose()

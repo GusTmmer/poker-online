@@ -3,7 +3,7 @@ import { formatChips } from './drawSeat'
 import {
   DECK_DELAY_MS, SLIDE_MS, FLIP_PAUSE_MS, FLIP_STAGGER_MS, FLIP_HALF_MS, DEAL_FLIGHT_MS,
 } from './constants'
-import { easeIn, easeOut, lerp, tickTweens } from './tween'
+import { easeInOut, easeOut, lerp, tickTweens } from './tween'
 import type { SceneState } from './sceneTypes'
 import { tickBursts } from './burst'
 
@@ -82,10 +82,13 @@ export function tick(scene: SceneState, dt: number) {
   for (const fc of scene.flyingChips) {
     if (fc.done) continue
     fc.elapsed += dt
-    const p = Math.min(fc.elapsed / fc.duration, 1), e = easeIn(p)
-    fc.sprite.x = lerp(fc.fromX, 0, e)
-    fc.sprite.y = lerp(fc.fromY, 0, e)
-    fc.sprite.alpha = 1 - p
+    const t = fc.elapsed - fc.delay
+    if (t < 0) continue
+    const p = Math.min(t / fc.duration, 1), e = easeInOut(p)
+    fc.sprite.x = lerp(fc.fromX, fc.toX, e)
+    // A shallow arc: chips are tossed, not dragged.
+    fc.sprite.y = lerp(fc.fromY, fc.toY, e) - Math.sin(p * Math.PI) * 14
+    fc.sprite.alpha = p < 0.1 ? p / 0.1 : p < 0.8 ? 1 : 1 - (p - 0.8) / 0.2
     if (p >= 1) { scene.animLayer.removeChild(fc.sprite); fc.done = true }
   }
   scene.flyingChips = scene.flyingChips.filter((fc) => !fc.done)
@@ -97,8 +100,8 @@ export function tick(scene: SceneState, dt: number) {
     const t = wc.elapsed - wc.delay
     if (t < 0) continue
     const p = Math.min(t / wc.duration, 1)
-    wc.sprite.x = lerp(0, wc.toX, p)
-    wc.sprite.y = lerp(0, wc.toY, p)
+    wc.sprite.x = lerp(wc.fromX, wc.toX, p)
+    wc.sprite.y = lerp(wc.fromY, wc.toY, p)
     wc.sprite.alpha = p < 0.08 ? p/0.08 : p < 0.8 ? 1 : 1 - (p-0.8)/0.2
     const sc = p < 0.08 ? lerp(0.4, 1.1, p/0.08) : p < 0.5 ? lerp(1.1, 1, (p-0.08)/0.42) : lerp(1, 0.5, (p-0.5)/0.5)
     wc.sprite.scale.set(sc)

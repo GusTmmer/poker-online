@@ -66,23 +66,11 @@ const Amount = styled.div`
   white-space: nowrap;
 `
 
-const Previous = styled.div`
-  font-family: 'Cormorant Garamond', Georgia, serif;
-  font-size: 1.05rem;
-  color: ${palette.creamMuted};
-
-  s {
-    text-decoration-color: ${palette.danger};
-  }
-`
-
 const HIDE_AFTER_MS = 2800
 
 interface Announcement {
   small: number
   big: number
-  fromSmall: number
-  fromBig: number
 }
 
 /**
@@ -99,7 +87,7 @@ export function BlindsBanner({ small, big }: { small: number; big: number }) {
     const p = prev.current
     prev.current = { small, big }
     if (p && (big > p.big || small > p.small)) {
-      setAnnounced({ small, big, fromSmall: p.small, fromBig: p.big })
+      setAnnounced({ small, big })
       const timer = setTimeout(() => setAnnounced(null), HIDE_AFTER_MS)
       return () => clearTimeout(timer)
     }
@@ -120,9 +108,6 @@ export function BlindsBanner({ small, big }: { small: number; big: number }) {
             <Amount>
               {announced.small} / {announced.big}
             </Amount>
-            <Previous>
-              was <s>{announced.fromSmall} / {announced.fromBig}</s>
-            </Previous>
           </Hero>
         </Layer>
       )}

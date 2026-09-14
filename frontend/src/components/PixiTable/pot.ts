@@ -7,20 +7,21 @@ import type { SceneState } from './sceneTypes'
 const STACK_COLORS = [0x6b2230, 0x26221f, 0x1f5c3a, 0x24466b, 0xc9a227]
 const MAX_CHIPS_TOTAL = 16
 
-const CW = 22  // chip ellipse width (CHIP_W)
+export const CW = 22  // chip ellipse width (CHIP_W)
 
-function chipCountFor(pot: number) {
-  return pot <= 0 ? 0 : Math.min(Math.round(Math.sqrt(pot / 3)) + 1, MAX_CHIPS_TOTAL)
+/** Grows with the pot measured in big blinds, so it reads the same at any stack depth. */
+function chipCountFor(pot: number, bigBlind: number) {
+  return pot <= 0 ? 0 : Math.min(Math.round(Math.sqrt(pot / Math.max(1, bigBlind))) + 1, MAX_CHIPS_TOTAL)
 }
 
 // Each variant defines groups filled sequentially (group 0 fills completely before group 1 starts).
 // Within a group, chips are distributed evenly across all positions — so new stacks appear in sync.
 // 5 variants are defined; one is chosen randomly when the pot resets.
-interface PotSlotDef { cx: number; colorOff: number; raise: number }
-interface PotGroup { max: number; positions: PotSlotDef[] }
-interface PotStackDef { cx: number; count: number; colorOff: number; raise: number }
+export interface PotSlotDef { cx: number; colorOff: number; raise: number }
+export interface PotGroup { max: number; positions: PotSlotDef[] }
+export interface PotStackDef { cx: number; count: number; colorOff: number; raise: number }
 
-function fillPotGroups(chips: number, groups: PotGroup[]): PotStackDef[] {
+export function fillPotGroups(chips: number, groups: PotGroup[]): PotStackDef[] {
   let rem = chips
   const out: PotStackDef[] = []
   for (const grp of groups) {
@@ -80,6 +81,34 @@ export function randomPotVariant() {
   return Math.floor(Math.random() * POT_VARIANTS.length)
 }
 
+/** Where the pot's chips sit, relative to the pot container — flying chips land here. */
+export const POT_Y = 35
+
+/** Draws clay chip stacks (bottom chip at y = raise, growing upward) onto `g`. Shared by the pot and seat piles. */
+export function drawChipStacks(g: Graphics, stacks: PotStackDef[]) {
+  const CHIP_H = 8, OVERLAP = 5
+  const rw = CW / 2, rh = CHIP_H / 2
+  for (const { cx, count, colorOff, raise } of stacks) {
+    for (let i = 0; i < count; i++) {
+      const col = STACK_COLORS[(colorOff + i) % STACK_COLORS.length]
+      const y = raise - i * (CHIP_H - OVERLAP)
+
+      // Drop shadow
+      g.ellipse(cx, y + rh * 0.65, rw, rh * 0.55).fill({ color: 0x000000, alpha: 0.3 })
+      // Main chip face
+      g.ellipse(cx, y, rw, rh).fill({ color: col })
+      // Ivory edge spots on the visible band — reads as a real clay chip
+      for (const tx of [-rw * 0.55, 0, rw * 0.55]) {
+        g.rect(cx + tx - 1, y + rh * 0.25, 2, rh * 0.55).fill({ color: 0xf5efdc, alpha: 0.5 })
+      }
+      // Top rim highlight — rounded edge catching light
+      g.ellipse(cx, y - rh * 0.42, rw * 0.78, rh * 0.38).fill({ color: 0xffffff, alpha: 0.22 })
+      // Edge stroke
+      g.ellipse(cx, y, rw, rh).stroke({ color: 0x000000, alpha: 0.52, width: 1 })
+    }
+  }
+}
+
 const S_POT_WORD   = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 11, fontWeight: '600', fill: hex.gold, letterSpacing: 2 })
 const S_POT_AMOUNT = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 14, fontWeight: 'bold', fill: hex.cream })
 
@@ -99,7 +128,7 @@ function makePotLabel(potTotal: number): Container {
   return c
 }
 
-export function updatePot(scene: SceneState, potTotal: number, stage: string | null) {
+export function updatePot(scene: SceneState, potTotal: number, stage: string | null, bigBlind: number) {
   if (potTotal === scene.lastPotTotal && stage === scene.lastRoundStage) return
 
   // Pick a new variant when the pot resets so each round gets a fresh layout style
@@ -112,34 +141,13 @@ export function updatePot(scene: SceneState, potTotal: number, stage: string | n
 
   const { potContainer } = scene
   potContainer.removeChildren()
-  potContainer.y = 35
+  potContainer.y = POT_Y
 
   if (potTotal > 0) {
     const g = new Graphics()
-    const CHIP_H = 8, OVERLAP = 5
-    const rw = CW / 2, rh = CHIP_H / 2
+    const stacks = fillPotGroups(chipCountFor(potTotal, bigBlind), POT_VARIANTS[scene.potVariant])
 
-    const stacks = fillPotGroups(chipCountFor(potTotal), POT_VARIANTS[scene.potVariant])
-
-    for (const { cx, count, colorOff, raise } of stacks) {
-      for (let i = 0; i < count; i++) {
-        const col = STACK_COLORS[(colorOff + i) % STACK_COLORS.length]
-        const y = raise - i * (CHIP_H - OVERLAP)
-
-        // Drop shadow
-        g.ellipse(cx, y + rh * 0.65, rw, rh * 0.55).fill({ color: 0x000000, alpha: 0.3 })
-        // Main chip face
-        g.ellipse(cx, y, rw, rh).fill({ color: col })
-        // Ivory edge spots on the visible band — reads as a real clay chip
-        for (const tx of [-rw * 0.55, 0, rw * 0.55]) {
-          g.rect(cx + tx - 1, y + rh * 0.25, 2, rh * 0.55).fill({ color: 0xf5efdc, alpha: 0.5 })
-        }
-        // Top rim highlight — rounded edge catching light
-        g.ellipse(cx, y - rh * 0.42, rw * 0.78, rh * 0.38).fill({ color: 0xffffff, alpha: 0.22 })
-        // Edge stroke
-        g.ellipse(cx, y, rw, rh).stroke({ color: 0x000000, alpha: 0.52, width: 1 })
-      }
-    }
+    drawChipStacks(g, stacks)
     potContainer.addChild(g)
   }
 

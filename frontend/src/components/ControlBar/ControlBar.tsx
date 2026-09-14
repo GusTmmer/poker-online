@@ -9,6 +9,8 @@ import { raiseStep, snapRaiseValue } from './snapRaiseValue'
 import { TurnTimer } from '../TurnTimer/TurnTimer'
 import { gradient, palette } from '../../theme'
 
+const BAR_MIN_HEIGHT = '4.8rem'
+
 const Bar = styled.div<{ compact: boolean }>`
   position: fixed;
   bottom: 0;
@@ -27,6 +29,10 @@ const Bar = styled.div<{ compact: boolean }>`
   justify-content: center;
   gap: 1rem;
   flex-wrap: wrap;
+  /* Every mode reserves the acting row's height (buttons + raise slider), so the table above never
+     re-fits when the bar switches between lobby, acting, all-in and revealing. */
+  box-sizing: border-box;
+  min-height: ${BAR_MIN_HEIGHT};
 
   /* Phone landscape: a slim column down the right edge, so the table keeps the full height. */
   ${(p) => p.compact && `
@@ -36,6 +42,7 @@ const Bar = styled.div<{ compact: boolean }>`
     font-size: 0.8rem;
     flex-direction: column;
     flex-wrap: nowrap;
+    min-height: 0;
     justify-content: center;
     gap: 0.6rem;
     padding: 0.6rem 0.55rem;
@@ -302,7 +309,12 @@ export function ControlBar({
   const shellProps = { gameState, myPlayerId, tableId, compact }
 
   if (mode === 'spectating') {
-    return <ControlBarShell {...shellProps} />
+    const stillInHand = gameState.players.find((p) => p.id === myPlayerId)?.isActive ?? false
+    return (
+      <ControlBarShell {...shellProps}>
+        <Waiting data-testid="spectating">{stillInHand ? 'All in — waiting for the hand' : 'Watching the hand'}</Waiting>
+      </ControlBarShell>
+    )
   }
 
   if (mode === 'idle') {
