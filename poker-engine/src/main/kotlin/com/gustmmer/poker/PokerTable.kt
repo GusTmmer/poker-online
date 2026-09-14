@@ -1,9 +1,13 @@
 package com.gustmmer.poker
 
+import com.gustmmer.poker.bot.BotDecision
+import com.gustmmer.poker.bot.BotStrategy
+import com.gustmmer.poker.bot.BotView
 import com.gustmmer.poker.deck.Deck
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.round.*
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
 import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlin.random.nextInt
@@ -22,6 +26,8 @@ data class Blinds(val big: Int, val small: Int) {
         small = (small * multiplier).roundToInt(),
     )
 }
+
+private val log = LoggerFactory.getLogger(PokerTable::class.java)
 
 class PokerTable(
     private var state: PokerTableState,
@@ -52,9 +58,10 @@ class PokerTable(
             firstPlayer: Player,
             config: TableConfig,
             persistence: PokerTablePersistence,
+            bots: List<Player> = emptyList(),
         ): PokerTable {
-            firstPlayer.addChips(config.startingChips)
-            val players = mutableListOf(firstPlayer)
+            val players = (listOf(firstPlayer) + bots).toMutableList()
+            players.forEach { it.addChips(config.startingChips) }
             val state = PokerTableState(
                 id = id,
                 players = players,
@@ -159,6 +166,40 @@ class PokerTable(
         return command
     }
 
+    /**
+     * What the computer player whose turn it is would do, without doing it. Null when the turn isn't a
+     * bot's. The decision's randomness comes from [rng]; its `thinkMs` never depends on it.
+     */
+    fun botDecisionForCurrentPlayer(rng: Random = Random.Default): BotDecision? {
+        val roundState = state.roundState ?: return null
+        val bettingState = roundState.bettingRoundState ?: return null
+        if (!roundState.pokerRoundStage.isBettingRound()) return null
+        val bot = roundState.playerOrdering.bettingPlayer()
+        if (!bot.isBot || bot !in bettingState.toAct || !bot.canBet()) return null
+        return BotStrategy.decide(BotView.from(roundState, bot), bot.botPersonality!!.profile, rng)
+    }
+
+    /**
+     * Plays the current computer player's turn (staged). Returns the command played, or null when it
+     * isn't a bot's turn. A decision the engine rejects is logged and replaced by check-or-fold, so a
+     * strategy bug can never stall the table.
+     */
+    fun playBotTurn(rng: Random = Random.Default): PlayerCommand? {
+        val decision = botDecisionForCurrentPlayer(rng) ?: return null
+        val bot = state.roundState!!.playerOrdering.bettingPlayer()
+        return try {
+            processPlayerCommand(decision.command)
+            log.debug("Bot {} ({}): {} — {}", bot.name, bot.botPersonality, decision.command.type, decision.reason)
+            decision.command
+        } catch (e: IllegalArgumentException) {
+            log.warn("Bot {} made an illegal move ({}); checking or folding instead", bot.name, e.message)
+            val toCall = state.roundState!!.bettingRoundState!!.pot.chipsToMatchCurrentBet(bot)
+            val fallback = if (toCall == 0) Call(bot.id) else Fold(bot.id)
+            processPlayerCommand(fallback)
+            fallback
+        }
+    }
+
     fun playerJoin(player: Player): Boolean {
         if (!state.config.isOpen) return false
         if (state.players.size >= state.config.maxPlayers) return false
@@ -232,7 +273,8 @@ class PokerTable(
         state = state.copy(readyPlayers = state.readyPlayers + playerId)
         dirty = true
 
-        return state.players.participating().all { it.id in state.readyPlayers }
+        // Computer players are always ready.
+        return state.players.participating().filterNot { it.isBot }.all { it.id in state.readyPlayers }
     }
 
     /**

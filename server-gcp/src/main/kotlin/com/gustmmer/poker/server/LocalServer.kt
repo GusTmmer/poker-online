@@ -22,6 +22,7 @@ fun main() {
         // The e2e suite creates many tables from one IP within a minute; let a local run lift the caps.
         rateLimitMutations = System.getenv("RATE_LIMIT_MUTATIONS")?.toIntOrNull() ?: 30,
         rateLimitReads = System.getenv("RATE_LIMIT_READS")?.toIntOrNull() ?: 60,
+        botDelayScale = System.getenv("BOT_DELAY_SCALE")?.toDoubleOrNull() ?: 1.0,
     )
     // In-memory analogue of the Firestore setup: NotifyingPersistence publishes each commit to the
     // in-memory bus, which the connection manager subscribes to — same fan-out path as production.

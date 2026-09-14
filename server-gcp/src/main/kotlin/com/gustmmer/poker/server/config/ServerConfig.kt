@@ -36,6 +36,11 @@ data class ServerConfig(
      * defaults to false so local dev over `http://localhost` still receives and returns the cookie.
      */
     val secureCookies: Boolean = false,
+    /**
+     * Multiplier on computer players' "thinking" delays (about 0.7–2.6s each). 1.0 in production; tests
+     * shrink it so bot turns resolve quickly.
+     */
+    val botDelayScale: Double = 1.0,
 ) {
     /**
      * Refuse to run with the insecure dev defaults. Called from the production entry point only —
@@ -64,6 +69,7 @@ data class ServerConfig(
             staticDir = System.getenv("STATIC_DIR")?.takeIf { it.isNotBlank() },
             internalToken = System.getenv("INTERNAL_TOKEN") ?: DEFAULT_INTERNAL_TOKEN,
             secureCookies = System.getenv("SECURE_COOKIES")?.toBooleanStrictOrNull() ?: false,
+            botDelayScale = System.getenv("BOT_DELAY_SCALE")?.toDoubleOrNull() ?: 1.0,
         )
     }
 }

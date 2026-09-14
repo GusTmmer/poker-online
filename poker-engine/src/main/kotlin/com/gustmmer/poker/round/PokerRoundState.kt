@@ -17,6 +17,7 @@ data class WireablePokerRoundState(
     val pokerRoundStage: PokerRoundStage,
     val bettingRoundState: WireableBettingRoundState?,
     val communityCards: List<Card>,
+    val actions: List<HandAction> = emptyList(),
 )
 
 data class PokerRoundState(
@@ -28,6 +29,8 @@ data class PokerRoundState(
     val pokerRoundStage: PokerRoundStage,
     val bettingRoundState: BettingRoundState?,
     val communityCards: MutableList<Card>,
+    /** Public log of every blind and action this hand, in order. */
+    val actions: List<HandAction> = emptyList(),
 ) : Wireable<WireablePokerRoundState> {
 
     override fun toWire() = WireablePokerRoundState(
@@ -39,6 +42,7 @@ data class PokerRoundState(
         pokerRoundStage,
         bettingRoundState?.toWire(),
         communityCards,
+        actions,
     )
 
     companion object {
@@ -55,6 +59,7 @@ data class PokerRoundState(
                     BettingRoundState.restore(it, playerMap, players, state.blinds)
                 },
                 communityCards = state.communityCards.toMutableList(),
+                actions = state.actions,
             )
         }
 

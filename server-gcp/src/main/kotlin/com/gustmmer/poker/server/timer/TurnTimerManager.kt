@@ -1,6 +1,7 @@
 package com.gustmmer.poker.server.timer
 
 import com.gustmmer.poker.GameStatus
+import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.majorityIdle
 import com.gustmmer.poker.persistence.PokerTablePersistence
@@ -12,8 +13,11 @@ import org.slf4j.LoggerFactory
 import java.time.Instant
 
 /**
- * Auto-plays an absent player's turn when their clock expires. The countdown itself lives in a
- * [TaskScheduler] (durable Cloud Tasks in production, an in-process timer for dev/tests) rather than in
+ * Auto-plays an absent player's turn when their clock expires, and plays computer players' turns: a
+ * bot's turn rides the same durable timer, scheduled for the bot's "thinking" delay, and its expiry
+ * plays the bot's move instead of timing anyone out.
+ *
+ * The countdown itself lives in a [TaskScheduler] (durable Cloud Tasks in production, an in-process timer for dev/tests) rather than in
  * this object's memory — so it survives restarts and scale-to-zero, and there is no per-instance timer
  * map to keep. The only durable timer state is the persisted `turnTimerStartedAt`, which doubles as the
  * idempotency token. Each auto-play/auto-pause is a commit, so clients are updated by the
@@ -22,6 +26,8 @@ import java.time.Instant
 class TurnTimerManager(
     private val persistence: PokerTablePersistence,
     private val scheduler: TaskScheduler,
+    /** Scales computer players' thinking delays; see [com.gustmmer.poker.server.config.ServerConfig.botDelayScale]. */
+    private val botDelayScale: Double = 1.0,
 ) {
     private val log = LoggerFactory.getLogger(TurnTimerManager::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -41,6 +47,14 @@ class TurnTimerManager(
             return
         }
 
+        // A computer player's "clock" is just its thinking time; the expiry plays its move.
+        val delayMs = if (currentPlayer.isBot) {
+            val thinkMs = PokerTable(state, persistence).botDecisionForCurrentPlayer()?.thinkMs ?: 0L
+            (thinkMs * botDelayScale).toLong()
+        } else {
+            durationMs
+        }
+
         // The persisted start time IS the turn token: every new turn re-arms with a fresh timestamp, so
         // a late or duplicate delivery of a prior turn's task no longer matches and is ignored. Also
         // the broadcast clock (`turnTimerEndsAt`).
@@ -52,7 +66,7 @@ class TurnTimerManager(
         if (persisted is ServiceResult.Failed) {
             log.warn("Could not persist turn-timer start for table {}: {}", tableId, persisted.error)
         }
-        scheduler.scheduleTurnTimeout(tableId, token = startedAt, delayMs = durationMs)
+        scheduler.scheduleTurnTimeout(tableId, token = startedAt, delayMs = delayMs)
     }
 
     fun cancelTimer(tableId: Int) {
@@ -137,7 +151,8 @@ class TurnTimerManager(
      * still matches the table's current `turnTimerStartedAt` (the player already acted or a new turn
      * began otherwise), the game is RUNNING (not paused/over), and a betting round is live. Otherwise it
      * idles the timed-out player and either auto-pauses (now majority-idle) or auto-plays their turn —
-     * all in one commit — then cascades through any further absent players.
+     * all in one commit — then cascades through any further absent players. A computer player's expiry
+     * plays its move instead.
      */
     suspend fun onTimerFired(tableId: Int, token: Long) {
         var autoPaused = false
@@ -147,6 +162,10 @@ class TurnTimerManager(
             if (s.gameStatus != GameStatus.RUNNING) return@withTable ServiceResult.Ok(false) // paused/over
             val roundState = s.roundState ?: return@withTable ServiceResult.Ok(false)
             if (!roundState.pokerRoundStage.isBettingRound()) return@withTable ServiceResult.Ok(false)
+
+            if (roundState.playerOrdering.bettingPlayer().isBot) {
+                return@withTable ServiceResult.Ok(table.playBotTurn() != null)
+            }
 
             roundState.playerOrdering.bettingPlayer().setAsIdle()
             if (s.majorityIdle()) {

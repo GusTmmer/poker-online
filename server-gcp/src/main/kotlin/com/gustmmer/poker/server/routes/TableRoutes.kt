@@ -29,12 +29,15 @@ data class CreateTableRequest(
     val blindEscalationMultiplier: Double = 2.0,
     /** Big blind for the first hand (small blind = half). Null derives it from [startingChips]. */
     val bigBlind: Int? = null,
+    /** Computer players to seat alongside the creator; they take seats out of [maxPlayers]. */
+    val computerPlayers: Int = 0,
 ) {
     /** The first rule this request breaks, as a user-facing message; null when it is valid. */
     fun validationError(): String? = when {
         playerName.isBlank() -> "Player name is required"
         startingChips !in 100..1_000_000 -> "Starting chips must be between 100 and 1,000,000"
         maxPlayers !in 2..10 -> "Max players must be between 2 and 10"
+        computerPlayers !in 0 until maxPlayers -> "Computer players must be between 0 and ${maxPlayers - 1}"
         turnTimerSeconds !in 1..600 -> "Turn timer must be between 1 and 600 seconds"
         blindEscalationOrbits !in 1..10 -> "Blind increase interval must be between 1 and 10 orbits"
         blindEscalationMultiplier !in 1.1..5.0 -> "Blind multiplier must be between 1.1 and 5"
@@ -75,7 +78,7 @@ data class TableInfoResponse(
 )
 
 @Serializable
-data class PlayerInfo(val id: Int, val name: String, val status: String, val chips: Int = 0)
+data class PlayerInfo(val id: Int, val name: String, val status: String, val chips: Int = 0, val isBot: Boolean = false)
 
 @Serializable
 data class TableSummary(

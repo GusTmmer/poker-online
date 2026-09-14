@@ -1,12 +1,15 @@
 import { BlurFilter, Container, FillGradient, Graphics, Text, TextStyle } from 'pixi.js'
 import type { PlayerView } from '../../api/types'
 import { parseCard } from '../../api/cards'
+import { formatEquity, type SeatEquity } from '../../game/runoutOdds'
 import { hex } from '../../theme'
 
 const STYLE_NAME      = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 12, fontWeight: '600', fill: hex.cream, letterSpacing: 0.5 })
 const STYLE_CHIPS     = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 11, fill: hex.creamMuted })
 const STYLE_STATUS    = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 10, fill: hex.parchment })
 const STYLE_HAND_NAME = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 11, fontWeight: '600', fill: hex.gold, letterSpacing: 0.5 })
+const STYLE_EQUITY_LEAD = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 12, fontWeight: '700', fill: hex.goldBright })
+const STYLE_EQUITY      = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 12, fontWeight: '600', fill: hex.gold })
 const STYLE_BET       = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 11, fontWeight: 'bold', fill: hex.gold })
 const STYLE_INITIAL_ME    = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 21, fontWeight: '700', fill: hex.goldBright })
 const STYLE_INITIAL_OTHER = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 17, fontWeight: '700', fill: hex.gold })
@@ -18,6 +21,10 @@ const MINI_H = 38
 const MINI_RANK       = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 12, fontWeight: 'bold', fill: 0x22201d })
 const MINI_SUIT_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 16, fill: 0xa8233a })
 const MINI_SUIT_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 16, fill: 0x22201d })
+const MINI_SIMPLE_RANK_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 16, fontWeight: 'bold', fill: 0xa8233a })
+const MINI_SIMPLE_RANK_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 16, fontWeight: 'bold', fill: 0x22201d })
+const MINI_SIMPLE_SUIT_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 17, fill: 0xa8233a })
+const MINI_SIMPLE_SUIT_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 17, fill: 0x22201d })
 
 // Medallion diameters — the local player gets a slightly larger seat.
 const SIZE_ME = 44
@@ -76,6 +83,11 @@ function makeAvatar(player: PlayerView, isMe: boolean): Container {
   g.arc(0, 0, r - 1, -Math.PI * 0.85, -Math.PI * 0.35).stroke({ color: 0xffffff, alpha: 0.25, width: 1 })
   c.addChild(g)
 
+  if (player.botPersonality) {
+    c.addChild(makeBotGlyph(r))
+    return c
+  }
+
   const initial = new Text({
     text: (Array.from(player.name)[0] ?? '?').toUpperCase(),
     style: isMe ? STYLE_INITIAL_ME : STYLE_INITIAL_OTHER,
@@ -85,6 +97,26 @@ function makeAvatar(player: PlayerView, isMe: boolean): Container {
   c.addChild(initial)
 
   return c
+}
+
+/** A small gold automaton head — antenna, rounded face, two eyes — in place of a computer player's initial. */
+function makeBotGlyph(r: number): Graphics {
+  const u = r / 18
+  const g = new Graphics()
+  g.moveTo(0, -9 * u).lineTo(0, -12.5 * u).stroke({ color: hex.gold, width: 1.4 * u })
+  g.circle(0, -13.5 * u, 1.8 * u).fill({ color: hex.goldBright })
+  g.roundRect(-8.5 * u, -9 * u, 17 * u, 14 * u, 3.5 * u).stroke({ color: hex.gold, width: 1.6 * u })
+  g.circle(-3.6 * u, -2.5 * u, 2 * u).fill({ color: hex.goldBright })
+  g.circle(3.6 * u, -2.5 * u, 2 * u).fill({ color: hex.goldBright })
+  g.moveTo(-3.5 * u, 2 * u).lineTo(3.5 * u, 2 * u).stroke({ color: hex.gold, width: 1.2 * u })
+  g.y = 3 * u
+  return g
+}
+
+const PERSONALITY_LABEL: Record<NonNullable<PlayerView['botPersonality']>, string> = {
+  AGGRESSIVE: 'cpu · aggressive',
+  BALANCED: 'cpu · balanced',
+  DEFENSIVE: 'cpu · defensive',
 }
 
 // ─── halo ─────────────────────────────────────────────────────────────────────
@@ -103,7 +135,13 @@ function drawHaloShape(gfx: Graphics, size: number, color: number, scale: number
 
 // ─── mini card ────────────────────────────────────────────────────────────────
 
-function makeMiniCard(cardCode: string, isPocket = false): Container {
+/** How a seat is laid out: labels above the avatar for seats across the top, and the phone layout. */
+export interface SeatLayout {
+  flipLabels: boolean
+  compact: boolean
+}
+
+function makeMiniCard(cardCode: string, isPocket: boolean, simple: boolean): Container {
   const c = new Container()
   const { rank, glyph, color } = parseCard(cardCode)
 
@@ -120,11 +158,24 @@ function makeMiniCard(cardCode: string, isPocket = false): Container {
   bg.roundRect(0, 0, MINI_W, MINI_H, 3).fill({ color: hex.ivory }).stroke({ color: 0x000000, alpha: 0.22, width: 1 })
   c.addChild(bg)
 
+  const red = color === 'red'
+  if (simple) {
+    // Phones: rank over suit, centred and larger — no corner index to squint at.
+    const rankT = new Text({ text: rank, style: red ? MINI_SIMPLE_RANK_RED : MINI_SIMPLE_RANK_BLACK })
+    rankT.anchor.set(0.5, 0.5)
+    rankT.position.set(MINI_W / 2, MINI_H * 0.3)
+    const suitT = new Text({ text: glyph, style: red ? MINI_SIMPLE_SUIT_RED : MINI_SIMPLE_SUIT_BLACK })
+    suitT.anchor.set(0.5, 0.5)
+    suitT.position.set(MINI_W / 2, MINI_H * 0.72)
+    c.addChild(rankT, suitT)
+    return c
+  }
+
   const rankT = new Text({ text: rank, style: MINI_RANK })
   rankT.position.set(3, 2)
   c.addChild(rankT)
 
-  const suitT = new Text({ text: glyph, style: color === 'red' ? MINI_SUIT_RED : MINI_SUIT_BLACK })
+  const suitT = new Text({ text: glyph, style: red ? MINI_SUIT_RED : MINI_SUIT_BLACK })
   suitT.anchor.set(0.5, 0.5)
   suitT.position.set(MINI_W / 2, MINI_H * 0.68)
   c.addChild(suitT)
@@ -152,7 +203,15 @@ const WIDE_ROW_SCALE = 0.88
  * With no hand yet (pocket cards tabled during an all-in runout) only the pair is
  * shown. With no pocket cards known, the hand's five cards are shown as-is.
  */
-function buildHandSection(section: Container, hand: PlayerView['bestHand'], pocketCards: string[] | null) {
+/** What a seat shows about its hand at showdown; all empty outside one. */
+export interface SeatShowdown {
+  hand?: PlayerView['bestHand']
+  pocket?: string[]
+  /** Chance of winning, shown beside tabled cards while an all-in board is run out. */
+  equity?: SeatEquity
+}
+
+function buildHandSection(section: Container, { hand = null, pocket: pocketCards = [], equity }: SeatShowdown, compact: boolean) {
   let rowY = 0
   if (hand) {
     const nameT = new Text({ text: hand.name, style: STYLE_HAND_NAME })
@@ -166,8 +225,9 @@ function buildHandSection(section: Container, hand: PlayerView['bestHand'], pock
   section.addChild(row)
 
   const inHand = new Set(hand?.cards ?? [])
-  const pocket = pocketCards ?? []
-  const board = hand ? hand.cards.filter((c) => !pocket.includes(c)) : []
+  const pocket = pocketCards
+  // Phones show just the pocket pair (the board is on the felt); otherwise the board cards the hand uses follow.
+  const board = hand && !compact ? hand.cards.filter((c) => !pocket.includes(c)) : []
 
   let x = 0
   const place = (card: Container) => {
@@ -178,7 +238,7 @@ function buildHandSection(section: Container, hand: PlayerView['bestHand'], pock
 
   for (const card of pocket) {
     const plays = hand != null && inHand.has(card)
-    const mc = makeMiniCard(card, plays)
+    const mc = makeMiniCard(card, plays, compact)
     if (hand && !plays) mc.alpha = 0.4
     place(mc)
   }
@@ -192,7 +252,15 @@ function buildHandSection(section: Container, hand: PlayerView['bestHand'], pock
     x += DIVIDER_GAP
   }
 
-  for (const card of board) place(makeMiniCard(card))
+  for (const card of board) place(makeMiniCard(card, false, compact))
+
+  if (equity) {
+    const pill = makeEquityPill(equity)
+    pill.x = x + EQUITY_GAP - MINI_GAP
+    pill.y = (MINI_H - pill.height) / 2
+    row.addChild(pill)
+    x += EQUITY_GAP - MINI_GAP + pill.width + MINI_GAP
+  }
 
   const width = x - MINI_GAP
   const scale = pocket.length + board.length >= 7 ? WIDE_ROW_SCALE : 1
@@ -200,10 +268,29 @@ function buildHandSection(section: Container, hand: PlayerView['bestHand'], pock
   row.x = (-width * scale) / 2
 }
 
+const EQUITY_GAP = 6
+
+/** The broadcast-style win percentage: gold on a dark glass pill, brightest for the hand in front. */
+function makeEquityPill({ value, leading }: SeatEquity): Container {
+  const c = new Container()
+  const text = new Text({ text: formatEquity(value), style: leading ? STYLE_EQUITY_LEAD : STYLE_EQUITY })
+  const w = text.width + 12
+  const h = text.height + 6
+  const bg = new Graphics()
+  bg.roundRect(0, 0, w, h, h / 2)
+    .fill({ color: 0x000000, alpha: 0.6 })
+    .stroke({ color: leading ? hex.goldBright : hex.gold, alpha: leading ? 0.9 : 0.5, width: 1 })
+  text.anchor.set(0.5, 0.5)
+  text.position.set(w / 2, h / 2)
+  c.addChild(bg, text)
+  if (value === 0) c.alpha = 0.5
+  return c
+}
+
 // ─── build ────────────────────────────────────────────────────────────────────
 
 /** Build all seat objects for one player. Root is centered at (0,0). */
-export function buildSeat(player: PlayerView, isMe: boolean, flipLabels: boolean): SeatObjects {
+export function buildSeat(player: PlayerView, isMe: boolean, layout: SeatLayout): SeatObjects {
   const root = new Container()
   const size = isMe ? SIZE_ME : SIZE_OTHER
 
@@ -264,7 +351,7 @@ export function buildSeat(player: PlayerView, isMe: boolean, flipLabels: boolean
     chipsValue: player.chips, chipsDisplayValue: player.chips,
     isNextToAct: false,
   }
-  layoutSeat(s, isMe, flipLabels)
+  layoutSeat(s, isMe, layout.flipLabels)
   return s
 }
 
@@ -322,9 +409,8 @@ export function updateSeat(
   isWinner: boolean,
   isReady: boolean,
   roundInProgress: boolean,
-  showdownHand: PlayerView['bestHand'] | undefined,
-  showdownPocket: string[] | undefined,
-  flipLabels: boolean,
+  showdown: SeatShowdown,
+  { flipLabels, compact }: SeatLayout,
 ) {
   s.isNextToAct = isNextToAct
 
@@ -393,7 +479,8 @@ export function updateSeat(
     bx += b.r * 2 + 3
     s.badges.addChild(bc)
   }
-  s.badges.x = -bx / 2
+  // Phones: badges sit beside the avatar instead of taking a row of their own.
+  s.badges.x = compact ? -size / 2 - 4 - bx : -bx / 2
 
   // Status row
   s.statusContainer.removeChildren()
@@ -406,14 +493,18 @@ export function updateSeat(
     label.x = 8; label.y = 0
     s.statusContainer.addChild(dot, label)
     s.statusContainer.x = -s.statusContainer.width / 2
+  } else if (player.botPersonality && !compact) {
+    const label = new Text({ text: PERSONALITY_LABEL[player.botPersonality], style: STYLE_STATUS })
+    s.statusContainer.addChild(label)
+    s.statusContainer.x = -s.statusContainer.width / 2
   }
 
   s.readyDot.visible = !roundInProgress && isReady && player.status === 'ONLINE'
 
   // Showdown hand section
   s.handSection.removeChildren()
-  if (showdownHand || showdownPocket) {
-    buildHandSection(s.handSection, showdownHand ?? null, showdownPocket ?? null)
+  if (showdown.hand || showdown.pocket) {
+    buildHandSection(s.handSection, showdown, compact)
   }
 
   // Re-layout vertical stack
@@ -434,17 +525,21 @@ export function updateSeat(
     y -= s.chipsText.height; s.chipsText.y = y
     y -= LINE_GAP + s.nameText.height; s.nameText.y = y
     y -= LINE_GAP
-    if (badgeItems.length > 0) { y -= BADGE_H + 2; s.badges.y = y }
+    if (compact) s.badges.y = -BADGE_H / 2
+    else if (badgeItems.length > 0) { y -= BADGE_H + 2; s.badges.y = y }
 
     s.handSection.x = 0; s.handSection.y = avatarH / 2 + LINE_GAP
   } else {
     s.betTag.y = -avatarH / 2 - 20
 
     let y = avatarH / 2 + LINE_GAP
-    if (badgeItems.length > 0) { s.badges.y = y; y += BADGE_H + 2 + LINE_GAP } else { s.badges.y = y }
+    if (compact) s.badges.y = -BADGE_H / 2
+    else if (badgeItems.length > 0) { s.badges.y = y; y += BADGE_H + 2 + LINE_GAP } else { s.badges.y = y }
     s.nameText.y = y; y += s.nameText.height + LINE_GAP
     s.chipsText.y = y; y += s.chipsText.height + LINE_GAP
     if (s.statusContainer.children.length > 0) { s.statusContainer.y = y; y += 14 + LINE_GAP } else { s.statusContainer.y = y }
-    s.handSection.x = 0; s.handSection.y = y
+    s.handSection.x = 0
+    // Phones: the row goes on the table side of the seat (above it), not further off the screen's edge.
+    s.handSection.y = compact ? -avatarH / 2 - LINE_GAP - s.handSection.height : y
   }
 }

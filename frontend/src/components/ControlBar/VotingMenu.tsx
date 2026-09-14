@@ -4,6 +4,7 @@ import styled from '@emotion/styled'
 import type { GameStateUpdate } from '../../api/types'
 import { createVoteSession, renameTable, requestKick, requestPause, requestUnpause } from '../../api/client'
 import { MAX_TABLE_NAME_LENGTH } from '../../api/tableLabel'
+import { copyToClipboard, inviteLink } from '../../api/inviteLink'
 import { useSession } from '../../context/SessionContext'
 import { gradient, palette } from '../../theme'
 
@@ -65,6 +66,20 @@ const ErrorBubble = styled.div`
   pointer-events: none;
 `
 
+const NoticeBubble = styled(ErrorBubble)`
+  background: ${gradient.panel};
+  color: ${palette.gold};
+  border-color: ${palette.gold};
+`
+
+const Hint = styled.div`
+  padding: 0.2rem 0.5rem;
+  max-width: 15rem;
+  color: ${palette.creamMuted};
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 0.85rem;
+`
+
 const Dropdown = styled.div`
   position: absolute;
   bottom: 3rem;
@@ -123,7 +138,7 @@ const RenameInput = styled.input`
   }
 `
 
-type MenuView = null | 'main' | 'kick' | 'rename'
+type MenuView = null | 'main' | 'kick' | 'rename' | 'invite'
 
 interface VotingMenuProps {
   gameState: GameStateUpdate
@@ -138,6 +153,24 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
   const { tableInfo, refresh } = useSession()
   const { failed, message: errorMessage, showError } = useErrorFlash(4000)
   const rootRef = useRef<HTMLDivElement>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+  }, [])
+
+  async function copyInvite() {
+    if (await copyToClipboard(inviteLink(tableId))) {
+      setMenuView(null)
+      setLinkCopied(true)
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = setTimeout(() => setLinkCopied(false), 2500)
+    } else {
+      // No clipboard access (e.g. plain http on a LAN address): show the link to copy by hand.
+      setMenuView('invite')
+    }
+  }
 
   function openRename() {
     setNameDraft(tableInfo?.name ?? '')
@@ -182,13 +215,19 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
 
   return (
     <MenuRoot ref={rootRef}>
-      <MenuButton onClick={() => setMenuView((v) => (v ? null : 'main'))} aria-label="Voting menu">
+      <MenuButton onClick={() => setMenuView((v) => (v ? null : 'main'))} aria-label="Table menu">
         ⋮
       </MenuButton>
       {failed && <ErrorBadge>failed</ErrorBadge>}
       {failed && errorMessage && !menuView && <ErrorBubble role="alert">{errorMessage}</ErrorBubble>}
+      {linkCopied && !failed && !menuView && (
+        <NoticeBubble role="status">Invite link copied — send it to a friend</NoticeBubble>
+      )}
       {menuView === 'main' && (
         <Dropdown>
+          <Item data-testid="menu-copy-invite" onClick={() => void copyInvite()}>
+            Copy invite link
+          </Item>
           <Item onClick={openRename}>Rename table…</Item>
           <Divider />
           {gameState.gameStatus === 'PAUSED' ? (
@@ -221,6 +260,20 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
             }}
           />
           <Item onClick={() => void saveName()}>Save name</Item>
+          <Divider />
+          <Item onClick={() => setMenuView('main')}>← Back</Item>
+        </Dropdown>
+      )}
+      {menuView === 'invite' && (
+        <Dropdown>
+          <Hint>Copy this link and send it to the players you want to invite:</Hint>
+          <RenameInput
+            data-testid="invite-link"
+            readOnly
+            autoFocus
+            value={inviteLink(tableId)}
+            onFocus={(e) => e.currentTarget.select()}
+          />
           <Divider />
           <Item onClick={() => setMenuView('main')}>← Back</Item>
         </Dropdown>

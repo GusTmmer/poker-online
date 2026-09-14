@@ -28,7 +28,7 @@ export class BotClient {
 
   async createTable(
     name: string,
-    opts: { startingChips?: number; turnTimerSeconds?: number; maxPlayers?: number } = {},
+    opts: { startingChips?: number; turnTimerSeconds?: number; maxPlayers?: number; computerPlayers?: number } = {},
   ): Promise<number> {
     const res = await this.ctx.post('/api/tables', {
       data: {
@@ -36,6 +36,7 @@ export class BotClient {
         startingChips: opts.startingChips ?? 1000,
         turnTimerSeconds: opts.turnTimerSeconds ?? 120,
         maxPlayers: opts.maxPlayers ?? 6,
+        computerPlayers: opts.computerPlayers ?? 0,
       },
     })
     const body = await res.json()

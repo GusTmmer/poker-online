@@ -1,5 +1,6 @@
 package com.gustmmer.poker
 
+import com.gustmmer.poker.bot.BotPersonality
 import com.gustmmer.poker.deck.Card
 import com.gustmmer.poker.deck.CardListSerializer
 import kotlinx.serialization.Serializable
@@ -25,10 +26,12 @@ data class WireablePlayer(
     @Serializable(with = CardListSerializer::class)
     val pocketCards: List<Card> = emptyList(),
     val chips: Int = 0,
+    /** Null for humans. */
+    val botPersonality: BotPersonality? = null,
 )
 
 fun WireablePlayer.restore(): Player {
-    val player = Player(id, name)
+    val player = Player(id, name, botPersonality)
     player.addChips(chips)
     when (status) {
         PlayerStatus.OFFLINE -> player.setAsOffline()
@@ -46,7 +49,15 @@ fun WireablePlayer.restore(): Player {
     return player
 }
 
-class Player(val id: Int, val name: String = "Player $id") {
+class Player(
+    val id: Int,
+    val name: String = "Player $id",
+    /** Set for computer players, which the server plays via [PokerTable.playBotTurn]; null for humans. */
+    val botPersonality: BotPersonality? = null,
+) {
+
+    val isBot: Boolean
+        get() = botPersonality != null
 
     var status: PlayerStatus = PlayerStatus.ONLINE
         private set
@@ -114,6 +125,7 @@ class Player(val id: Int, val name: String = "Player $id") {
         roundStatus = roundStatus,
         pocketCards = pocketCards,
         chips = chips,
+        botPersonality = botPersonality,
     )
 }
 

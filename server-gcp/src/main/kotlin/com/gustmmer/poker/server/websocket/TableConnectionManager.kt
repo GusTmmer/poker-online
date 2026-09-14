@@ -2,6 +2,7 @@ package com.gustmmer.poker.server.websocket
 
 import com.gustmmer.poker.GameStatus
 import com.gustmmer.poker.PokerTableState
+import com.gustmmer.poker.hand.ShowdownOdds
 import com.gustmmer.poker.hand.TexasHoldEmHandEvaluator
 import com.gustmmer.poker.hand.rankings.HandRanking
 import com.gustmmer.poker.round.PokerRoundStage
@@ -40,7 +41,19 @@ data class GameStateUpdate(
     val turnTimerEndsAt: Long? = null,
     /** The recipient's own betting limits while a betting round is live and they are in the hand; else null. */
     val myBettingOptions: BettingOptionsView? = null,
+    /**
+     * Only on a showdown reached before the river: each contender's chance of winning for every board the
+     * players will watch being run out (see [ShowdownOdds.forRunout]). Empty otherwise.
+     */
+    val runoutOdds: List<RunoutOddsView> = emptyList(),
 )
+
+@Serializable
+data class RunoutOddsView(val boardCards: Int, val equities: List<PlayerEquityView>)
+
+/** [equity] is a probability, 0..1. */
+@Serializable
+data class PlayerEquityView(val playerId: Int, val equity: Double)
 
 /** Chip limits for the recipient's next action. Raise amounts are increments on top of [amountToCall]. */
 @Serializable
@@ -67,6 +80,8 @@ data class PlayerView(
     val isSmallBlind: Boolean = false,
     val isBigBlind: Boolean = false,
     val bestHand: BestHandView? = null,
+    /** AGGRESSIVE / BALANCED / DEFENSIVE for computer players; null for humans. */
+    val botPersonality: String? = null,
 )
 
 private fun HandRanking.toDisplayName(): String = when (this) {
@@ -130,8 +145,13 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             VoteSummaryView(it.id, it.resolutionType, it.targetPlayerId, it.yesVoters.size, it.noVoters.size, it.requiredVotes)
         }
 
+        // The same for every recipient (a contender's cards are public at showdown), so computed once.
+        val runoutOdds = state.roundState?.let(ShowdownOdds::forRunout).orEmpty().map { street ->
+            RunoutOddsView(street.boardCards, street.equities.map { (id, equity) -> PlayerEquityView(id, equity) })
+        }
+
         for ((playerId, session) in tableConnections) {
-            val update = buildGameStateUpdate(state, playerId, voteViews)
+            val update = buildGameStateUpdate(state, playerId, voteViews, runoutOdds)
             val json = Json.encodeToString(update)
             val sent = runCatching { session.send(Frame.Text(json)) }.isSuccess
             if (!sent) {
@@ -154,7 +174,12 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
         }
     }
 
-    private fun buildGameStateUpdate(state: PokerTableState, forPlayerId: Int, activeVotes: List<VoteSummaryView> = emptyList()): GameStateUpdate {
+    private fun buildGameStateUpdate(
+        state: PokerTableState,
+        forPlayerId: Int,
+        activeVotes: List<VoteSummaryView> = emptyList(),
+        runoutOdds: List<RunoutOddsView> = emptyList(),
+    ): GameStateUpdate {
         val roundState = state.roundState
         val isShowdown = roundState?.pokerRoundStage == PokerRoundStage.SHOWDOWN
         val dealerId = roundState?.playerOrdering?.dealer()?.id
@@ -188,6 +213,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
                 isSmallBlind = player.id == smallBlindId,
                 isBigBlind = player.id == bigBlindId,
                 bestHand = bestHand,
+                botPersonality = player.botPersonality?.name,
             )
         }
 
@@ -195,7 +221,10 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             if (it.pokerRoundStage.isBettingRound()) it.playerOrdering.bettingPlayer().id else null
         }
 
+        // A computer player's turn has no clock to show: it acts within seconds, on its own schedule.
+        val botToAct = roundState?.takeIf { it.pokerRoundStage.isBettingRound() }?.playerOrdering?.bettingPlayer()?.isBot == true
         val turnTimerEndsAt = state.turnTimerStartedAt
+            ?.takeUnless { botToAct }
             ?.let { it + state.config.turnTimerSeconds * 1000L }
 
         val bettingState = roundState?.bettingRoundState
@@ -221,6 +250,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             activeVotes = activeVotes,
             turnTimerEndsAt = turnTimerEndsAt,
             myBettingOptions = myBettingOptions,
+            runoutOdds = runoutOdds,
         )
     }
 }

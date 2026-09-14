@@ -8,7 +8,7 @@ type GameState = {
   nextPlayerIdToAct: number | null
   gameStatus: string
   turnTimerEndsAt: number | null
-  players: Array<{ id: number; name: string; chips: number; pocketCards?: string[] | null }>
+  players: Array<{ id: number; name: string; chips: number; pocketCards?: string[] | null; botPersonality?: string | null }>
 }
 
 /** Fetch the latest game_state frame from the browser's WS spy. */
@@ -18,6 +18,11 @@ async function gs(page: import('@playwright/test').Page): Promise<GameState | nu
 
 /** Inject a WebSocket spy so tests can read game state via window.__lastGameState. */
 async function openTable(page: import('@playwright/test').Page, tableId: number) {
+  await installStateSpy(page)
+  await page.goto(`/table/${tableId}`)
+}
+
+async function installStateSpy(page: import('@playwright/test').Page) {
   await page.addInitScript(() => {
     const OrigWS = window.WebSocket
     window.WebSocket = class extends OrigWS {
@@ -28,13 +33,14 @@ async function openTable(page: import('@playwright/test').Page, tableId: number)
             const data = JSON.parse(e.data as string)
             if (data.type === 'game_state') {
               ;(window as { __lastGameState?: unknown }).__lastGameState = data
+              // The showdown frame is superseded within moments; keep the odds it carried.
+              if (data.runoutOdds?.length) (window as { __lastRunoutOdds?: unknown }).__lastRunoutOdds = data.runoutOdds
             }
           } catch { /* ignore */ }
         })
       }
     }
   })
-  await page.goto(`/table/${tableId}`)
 }
 
 /** Drive both bots until it's `targetId`'s turn (up to `rounds` polls). */
@@ -303,6 +309,15 @@ test.describe('all-in runout', () => {
 
       // The runout holds the lobby controls while flop, turn and river are dealt…
       await expect(page.locator('[data-testid="revealing"]')).toBeVisible({ timeout: 5_000 })
+
+      // …with the odds of winning for each board it shows: bare, flop, turn and river.
+      type Odds = { boardCards: number; equities: { playerId: number; equity: number }[] }[]
+      const odds = await page.evaluate(() => (window as { __lastRunoutOdds?: Odds }).__lastRunoutOdds ?? [])
+      expect(odds.map((o) => o.boardCards)).toEqual([0, 3, 4, 5])
+      for (const street of odds) {
+        expect(street.equities).toHaveLength(2)
+        expect(street.equities.reduce((sum, e) => sum + e.equity, 0)).toBeCloseTo(1, 6)
+      }
       await expect(page.locator('[data-testid="btn-start-round"]')).not.toBeVisible()
 
       // …then releases them once the showdown is revealed.
@@ -336,6 +351,175 @@ test.describe('mobile', () => {
       expect(box!.width).toBeGreaterThan(350)
       expect(box!.y + box!.height).toBeLessThanOrEqual(845)
       await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible()
+    } finally {
+      await host.dispose()
+    }
+  })
+})
+
+// ── phone layout ──────────────────────────────────────────────────────────────
+
+type Box = { left: number; top: number; right: number; bottom: number }
+type LayoutProbe = {
+  free: { w: number; h: number }
+  compact: boolean
+  seats: (Box & { playerId: number; hasShowdownRow: boolean })[]
+  myCards: Box | null
+}
+
+async function probe(page: import('@playwright/test').Page): Promise<LayoutProbe | null> {
+  return page.evaluate(() => (window as { __pokerLayout?: () => LayoutProbe }).__pokerLayout?.() ?? null)
+}
+
+function offScreen(box: Box, free: LayoutProbe['free']): boolean {
+  const slack = 1
+  return box.left < -slack || box.top < -slack || box.right > free.w + slack || box.bottom > free.h + slack
+}
+
+/**
+ * Six players see a hand through to showdown — the fullest a phone screen gets — while the test checks
+ * the local player's cards on their turn and then every seat, showdown row included, at the end.
+ */
+async function sixWayShowdownFitsTheScreen(page: import('@playwright/test').Page) {
+  const others = await Promise.all(Array.from({ length: 5 }, () => BotClient.create()))
+  try {
+    const tableId = await others[0].createTable('P1', { turnTimerSeconds: 120 })
+    for (let i = 1; i < others.length; i++) await others[i].join(tableId, `P${i + 1}`)
+    await openTable(page, tableId)
+    await page.fill('input[placeholder="Your name"]', 'Hero')
+    await page.click('button[type="submit"]')
+    await expect.poll(async () => (await gs(page))?.players.length, { timeout: 10_000 }).toBe(6)
+    const me = (await gs(page))!.players.find((p) => p.name === 'Hero')!.id
+
+    await others[0].startRound(tableId)
+    let checkedMyCards = false
+    for (let i = 0; i < 200; i++) {
+      const s = await others[0].getState(tableId)
+      if (s.gameStatus === 'WAITING' && i > 0) break
+      const toAct = s.nextPlayerIdToAct
+      if (toAct === me) {
+        const call = page.locator('[data-testid="btn-call"]')
+        await expect(call).toBeEnabled({ timeout: 10_000 })
+        if (!checkedMyCards) {
+          // Once dealt, the local player's own cards show — on screen.
+          await expect.poll(async () => (await probe(page))?.myCards != null, { timeout: 10_000 }).toBe(true)
+          const layout = (await probe(page))!
+          expect(offScreen(layout.myCards!, layout.free), JSON.stringify(layout)).toBe(false)
+          checkedMyCards = true
+        }
+        await call.click()
+      } else if (toAct != null) {
+        await others.find((o) => o.playerId === toAct)!.act(tableId, 'CALL')
+      }
+      await page.waitForTimeout(150)
+    }
+    expect(checkedMyCards).toBe(true)
+
+    await expect.poll(async () => (await probe(page))?.seats.filter((s) => s.hasShowdownRow).length, { timeout: 15_000 }).toBe(6)
+    const layout = (await probe(page))!
+    expect(layout.compact).toBe(true)
+    for (const seat of layout.seats) {
+      expect(offScreen(seat, layout.free), `seat ${seat.playerId} is off screen: ${JSON.stringify(layout)}`).toBe(false)
+    }
+  } finally {
+    await Promise.all(others.map((o) => o.dispose()))
+  }
+}
+
+test.describe('phone layout: portrait', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  test('every seat and showdown row of a six-way hand stays on screen', async ({ page }) => {
+    test.setTimeout(90_000)
+    await sixWayShowdownFitsTheScreen(page)
+  })
+})
+
+test.describe('phone layout: landscape', () => {
+  test.use({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true })
+  test('every seat and showdown row of a six-way hand stays on screen', async ({ page }) => {
+    test.setTimeout(90_000)
+    await sixWayShowdownFitsTheScreen(page)
+  })
+})
+
+test.describe('computer players', () => {
+  test('a table created with computer players seats them and they play their own turns', async ({ page }) => {
+    await installStateSpy(page)
+    await page.goto('/')
+    await page.fill('input[placeholder="Alice"]', 'Human')
+    await page.fill('[data-testid="input-computer-players"]', '3')
+    await page.click('button[type="submit"]')
+
+    const bar = page.locator('[data-testid="control-bar"]')
+    await expect(bar).toBeVisible({ timeout: 10_000 })
+    await expect.poll(async () => (await gs(page))?.players.filter((p) => p.botPersonality).length).toBe(3)
+    const me = (await gs(page))!.players.find((p) => !p.botPersonality)!.id
+
+    // Four-handed, a computer player is under the gun: nobody drives it, yet the turn reaches the human
+    // within its few seconds of "thinking" (the turn timer is 30s).
+    await bar.locator('[data-testid="btn-start-round"]').click()
+    await expect.poll(async () => (await gs(page))?.nextPlayerIdToAct, { timeout: 10_000 }).toBe(me)
+
+    // After the human calls, the computer players act in turn until it's the human's move again (or the
+    // hand is over).
+    await bar.locator('[data-testid="btn-call"]').click()
+    await expect.poll(async () => (await gs(page))?.nextPlayerIdToAct).not.toBe(me)
+    await expect
+      .poll(async () => {
+        const s = await gs(page)
+        return s?.nextPlayerIdToAct === me || s?.roundStage == null || s?.roundStage === 'SHOWDOWN'
+      }, { timeout: 20_000 })
+      .toBe(true)
+  })
+})
+
+test.describe('invite link', () => {
+  test('the host copies an invite link from the table menu and a friend joins through it', async ({ page, browser, baseURL }) => {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    await installStateSpy(page)
+    await page.goto('/')
+    await page.fill('input[placeholder="Alice"]', 'Host')
+    await page.fill('input[placeholder="Friday Night Poker"]', 'Invite Test Table')
+    await page.click('button[type="submit"]')
+    await expect(page.locator('[data-testid="control-bar"]')).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Table menu' }).click()
+    await page.locator('[data-testid="menu-copy-invite"]').click()
+    await expect(page.getByRole('status')).toContainText('Invite link copied')
+
+    const link = await page.evaluate(() => navigator.clipboard.readText())
+    const tableId = Number(new URL(page.url()).pathname.split('/').pop())
+    expect(link).toBe(`${baseURL}/table/${tableId}`)
+
+    const friendContext = await browser.newContext()
+    try {
+      const friend = await friendContext.newPage()
+      await friend.goto(link)
+      const invitation = friend.locator('[data-testid="join-invitation"]')
+      await expect(invitation).toContainText('Invite Test Table')
+      await expect(invitation).toContainText('Host · 1 of 6 seats taken')
+
+      await friend.fill('input[placeholder="Your name"]', 'Friend')
+      await friend.click('button[type="submit"]')
+      await expect(friend.locator('[data-testid="control-bar"]')).toBeVisible({ timeout: 10_000 })
+
+      await expect.poll(async () => (await gs(page))?.players.map((p) => p.name)).toEqual(['Host', 'Friend'])
+    } finally {
+      await friendContext.close()
+    }
+  })
+
+  test('the join tab accepts a pasted invite link', async ({ page, baseURL }) => {
+    const host = await BotClient.create()
+    try {
+      const tableId = await host.createTable('Host')
+      await page.goto('/')
+      await page.getByRole('button', { name: 'Join', exact: true }).click()
+      await page.fill('[data-testid="input-table-ref"]', `${baseURL}/table/${tableId}`)
+      await page.fill('input[placeholder="Alice"]', 'Friend')
+      await page.click('button[type="submit"]')
+      await expect(page).toHaveURL(new RegExp(`/table/${tableId}$`))
+      await expect(page.locator('[data-testid="control-bar"]')).toBeVisible({ timeout: 10_000 })
     } finally {
       await host.dispose()
     }

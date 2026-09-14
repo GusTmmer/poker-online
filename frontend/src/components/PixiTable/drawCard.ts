@@ -19,6 +19,10 @@ const STYLE_SUIT_SM_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSi
 const STYLE_SUIT_SM_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 12, fill: BLACK_PIP })
 const STYLE_PIP_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 30, fill: RED_PIP })
 const STYLE_PIP_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 30, fill: BLACK_PIP })
+const STYLE_SIMPLE_RANK_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 32, fontWeight: 'bold', fill: RED_PIP })
+const STYLE_SIMPLE_RANK_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 32, fontWeight: 'bold', fill: BLACK_PIP })
+const STYLE_SIMPLE_SUIT_RED   = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 34, fill: RED_PIP })
+const STYLE_SIMPLE_SUIT_BLACK = new TextStyle({ fontFamily: 'Georgia, serif', fontSize: 34, fill: BLACK_PIP })
 
 /** Warm ivory face stock with a hint of top-light, plus a soft cast shadow. */
 function cardStock(): Graphics {
@@ -41,13 +45,27 @@ function cardStock(): Graphics {
 /**
  * Draws a card face: corner indices (rank over suit) top-left and mirrored
  * bottom-right, large center pip. Returns a Container sized CARD_W × CARD_H.
+ *
+ * [simple] (phones) drops the corner indices for one big rank over its suit, centred —
+ * the corner indices shrink to a few pixels on a small screen.
  */
-export function makeCardFace(cardCode: string): Container {
+export function makeCardFace(cardCode: string, simple = false): Container {
   const c = new Container()
   const { rank, glyph, color } = parseCard(cardCode)
   const red = color === 'red'
 
   c.addChild(cardStock())
+
+  if (simple) {
+    const rankT = new Text({ text: rank, style: red ? STYLE_SIMPLE_RANK_RED : STYLE_SIMPLE_RANK_BLACK })
+    rankT.anchor.set(0.5, 0.5)
+    rankT.position.set(CARD_W / 2, CARD_H * 0.32)
+    const suitT = new Text({ text: glyph, style: red ? STYLE_SIMPLE_SUIT_RED : STYLE_SIMPLE_SUIT_BLACK })
+    suitT.anchor.set(0.5, 0.5)
+    suitT.position.set(CARD_W / 2, CARD_H * 0.7)
+    c.addChild(rankT, suitT)
+    return c
+  }
 
   // Top-left index: rank with its suit tucked under it
   const index = new Container()
@@ -208,12 +226,12 @@ export function makeCardBackPair(): Container {
   return c
 }
 
-/** A pair of face-up cards. Returns a Container sized PAIR_W × CARD_H. */
-export function makeCardFacePair(cards: string[]): Container {
+/** A pair of face-up cards (see [makeCardFace] for [simple]). Returns a Container sized PAIR_W × CARD_H. */
+export function makeCardFacePair(cards: string[], simple = false): Container {
   const c = new Container()
-  const left = makeCardFace(cards[0])
+  const left = makeCardFace(cards[0], simple)
   left.x = 0
-  const right = makeCardFace(cards[1])
+  const right = makeCardFace(cards[1], simple)
   right.x = CARD_W + CARD_GAP
   c.addChild(left, right)
   return c

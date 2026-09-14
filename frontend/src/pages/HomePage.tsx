@@ -4,6 +4,7 @@ import styled from '@emotion/styled'
 import { createTable, joinTable } from '../api/client'
 import { ApiError } from '../api/types'
 import { MAX_TABLE_NAME_LENGTH } from '../api/tableLabel'
+import { parseTableRef } from '../api/inviteLink'
 import { palette } from '../theme'
 import { MyTablesPanel } from '../components/MyTablesPanel'
 import {
@@ -86,6 +87,7 @@ export function HomePage() {
   const [createName, setCreateName] = useState('')
   const [tableName, setTableName] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(6)
+  const [computerPlayers, setComputerPlayers] = useState(0)
   const [startingChips, setStartingChips] = useState(1000)
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(30)
   const [blindEscalationOrbits, setBlindEscalationOrbits] = useState(2)
@@ -95,7 +97,7 @@ export function HomePage() {
   const bigBlind = bigBlindOverride ?? Math.max(2, Math.floor(startingChips / 50))
 
   const [joinName, setJoinName] = useState('')
-  const [tableIdStr, setTableIdStr] = useState('')
+  const [tableRef, setTableRef] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,6 +122,7 @@ export function HomePage() {
         blindEscalationOrbits,
         blindEscalationMultiplier,
         bigBlind,
+        computerPlayers: Math.min(Math.max(0, computerPlayers), maxPlayers - 1),
       })
       navigate(`/table/${response.tableId}`)
     } catch (e) {
@@ -131,8 +134,12 @@ export function HomePage() {
 
   async function handleJoin(e: React.FormEvent) {
     e.preventDefault()
-    const tableId = Number(tableIdStr)
-    if (!joinName.trim() || !tableId) return
+    const tableId = parseTableRef(tableRef)
+    if (!joinName.trim()) return
+    if (!tableId) {
+      setError("That doesn't look like an invite link or a table ID")
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
@@ -192,6 +199,17 @@ export function HomePage() {
                   max={10}
                   value={maxPlayers}
                   onChange={numericSetter(setMaxPlayers)}
+                />
+              </Field>
+              <Field>
+                Computer players
+                <FormInput
+                  data-testid="input-computer-players"
+                  type="number"
+                  min={0}
+                  max={maxPlayers - 1}
+                  value={computerPlayers}
+                  onChange={numericSetter(setComputerPlayers)}
                 />
               </Field>
               <Field>
@@ -256,12 +274,12 @@ export function HomePage() {
         ) : (
           <>
             <FormLabel>
-              Table ID
+              Invite link or table ID
               <FormInput
-                inputMode="numeric"
-                value={tableIdStr}
-                onChange={(e) => setTableIdStr(e.target.value.replace(/\D/g, ''))}
-                placeholder="123456"
+                data-testid="input-table-ref"
+                value={tableRef}
+                onChange={(e) => setTableRef(e.target.value)}
+                placeholder="https://…/table/123456"
                 required
               />
             </FormLabel>

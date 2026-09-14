@@ -73,7 +73,7 @@ fun Application.configureServer(
 
     val jwtService = JwtService(config.jwtSecret, config.secureCookies)
     val connectionManager = TableConnectionManager(bus)
-    val timerManager = TurnTimerManager(persistence, scheduler)
+    val timerManager = TurnTimerManager(persistence, scheduler, config.botDelayScale)
     // In-process schedulers fire through this handler; Cloud Tasks ignores it and uses the route below.
     scheduler.attachExpiry { tableId, token -> timerManager.onTimerFired(tableId, token) }
 

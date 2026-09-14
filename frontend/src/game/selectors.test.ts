@@ -14,6 +14,7 @@ function player(over: Partial<PlayerView> & { id: number }): PlayerView {
     isSmallBlind: false,
     isBigBlind: false,
     bestHand: null,
+    botPersonality: null,
     ...over,
   }
 }
@@ -32,6 +33,7 @@ function state(over: Partial<GameStateUpdate> = {}): GameStateUpdate {
     readyPlayerIds: [],
     activeVotes: [],
     message: null,
+    runoutOdds: [],
     ...over,
   }
 }

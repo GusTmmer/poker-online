@@ -53,6 +53,8 @@ export interface Runout {
   final: Frame
   queued: Frame[]
   timers: ReturnType<typeof setTimeout>[]
+  /** Community cards on the felt so far — selects which of the frame's runout odds the seats show. */
+  boardShown: number
 }
 
 export interface SceneState {
@@ -75,6 +77,11 @@ export interface SceneState {
   tweens: Tween[]
   bursts: ActionBurst[]
   runout: Runout | null
+  /**
+   * Phone layout: simplified card faces, pocket-only showdown rows placed on the table side of
+   * each seat, and badges beside the avatar — so seats fit a short screen.
+   */
+  compact: boolean
   /** performance.now() at which the current deal animation settles (0 when not dealing). */
   dealEndsAt: number
   ticker: Ticker

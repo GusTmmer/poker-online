@@ -116,7 +116,13 @@ export function GameScreen() {
         </svg>
       </LeaveButton>
       <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
-      <PixiPokerTable bus={bus} myPlayerId={myPlayerId} maxPlayers={tableInfo.maxPlayers} onRunoutChange={setRevealing} />
+      <PixiPokerTable
+        bus={bus}
+        myPlayerId={myPlayerId}
+        maxPlayers={tableInfo.maxPlayers}
+        onRunoutChange={setRevealing}
+        compact={viewport.compact}
+      />
       <ControlBar
         gameState={gameState}
         myPlayerId={myPlayerId}

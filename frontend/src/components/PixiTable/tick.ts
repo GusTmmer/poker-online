@@ -62,7 +62,7 @@ export function tick(scene: SceneState, dt: number) {
       cc.innerContainer.scale.x = 1 - p
       if (p >= 1) {
         cc.innerContainer.removeChildren()
-        const face = makeCardFace(cc.cardCode)
+        const face = makeCardFace(cc.cardCode, scene.compact)
         cc.innerContainer.addChild(face)
         cc.phase = 'flip-in'
       }

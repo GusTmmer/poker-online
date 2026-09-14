@@ -14,6 +14,8 @@ data class TableConfig(
     val blindEscalationMultiplier: Double = 2.0,
     /** Big blind for the first hand; null derives it from the starting stack (see [Blinds.initial]). */
     val startingBigBlind: Int? = null,
+    /** Computer players seated when the table was created. */
+    val computerPlayers: Int = 0,
 ) {
     companion object {
         /** Max stored length of a table [name]; the server truncates to this and the UI caps input at it. */

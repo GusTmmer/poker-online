@@ -25,6 +25,8 @@ class PokerRoundForTest(private var state: PokerRoundState) {
         reachedPokerRoundStages.add(state.pokerRoundStage)
     }
 
+    fun actions(): List<HandAction> = state.actions
+
     fun assertStage(stage: PokerRoundStage) = assertEquals(stage, state.pokerRoundStage)
 
     fun assertNextToAct(playerId: Int) = assertEquals(playerId, state.playerOrdering.bettingPlayer().id)

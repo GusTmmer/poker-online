@@ -56,7 +56,10 @@ class PokerRound(state: PokerRoundState) {
             throw IllegalStateException("Round is not in betting stage")
         }
 
+        // Classified before it's applied; recorded only once the coordinator has accepted it.
+        val action = describe(playerCommand)
         applyBettingResult(coordinator().processPlayerCommand(playerCommand))
+        action?.let(::record)
         finishIfShowdown()
 
         return state
@@ -75,7 +78,9 @@ class PokerRound(state: PokerRoundState) {
             return processCommand(Fold(playerId))
         }
 
+        val stage = state.pokerRoundStage
         applyBettingResult(coordinator().processOutOfTurnFold(player))
+        record(HandAction(playerId, stage, HandActionType.FOLD))
         finishIfShowdown()
         return state
     }
@@ -92,9 +97,44 @@ class PokerRound(state: PokerRoundState) {
 
     private fun takeBlinds() {
         with(state) {
-            playerOrdering.smallBlindPlayer().let { pot.addPlayerChips(it, min(it.chips, blinds.small)) }
-            playerOrdering.bigBlindPlayer().let { pot.addPlayerChips(it, min(it.chips, blinds.big)) }
+            postBlind(playerOrdering.smallBlindPlayer(), blinds.small, HandActionType.SMALL_BLIND)
+            postBlind(playerOrdering.bigBlindPlayer(), blinds.big, HandActionType.BIG_BLIND)
         }
+    }
+
+    private fun postBlind(player: Player, blind: Int, type: HandActionType) {
+        val chips = min(player.chips, blind)
+        pot.addPlayerChips(player, chips)
+        record(HandAction(player.id, PokerRoundStage.BET_BLINDS, type, chips))
+    }
+
+    /**
+     * Classifies [command] against the street as it stands *before* the command is applied. Null for a
+     * player who isn't in the hand — the coordinator rejects that command as out of turn.
+     */
+    private fun describe(command: PlayerCommand): HandAction? {
+        val stage = state.pokerRoundStage
+        val player = players.firstOrNull { it.id == command.playerId } ?: return null
+        val streetPot = state.bettingRoundState!!.pot
+        val toCall = streetPot.chipsToMatchCurrentBet(player)
+        val streetHasBet = streetPot.currentBet() > 0
+        return when (command) {
+            is Fold -> HandAction(player.id, stage, HandActionType.FOLD)
+            is Call -> when (toCall) {
+                0 -> HandAction(player.id, stage, HandActionType.CHECK)
+                else -> HandAction(player.id, stage, HandActionType.CALL, min(toCall, player.chips))
+            }
+            is Raise -> HandAction(
+                player.id, stage,
+                if (streetHasBet) HandActionType.RAISE else HandActionType.BET,
+                toCall + command.value, raised = true,
+            )
+            is AllIn -> HandAction(player.id, stage, HandActionType.ALL_IN, player.chips, raised = player.chips > toCall)
+        }
+    }
+
+    private fun record(action: HandAction) {
+        state = state.copy(actions = state.actions + action)
     }
 
     private fun dealCards() {

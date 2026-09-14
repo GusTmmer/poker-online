@@ -8,6 +8,8 @@ export interface CreateTableRequest {
   blindEscalationMultiplier?: number
   /** Big blind for the first hand (small blind = half). Omitted → derived from startingChips. */
   bigBlind?: number
+  /** Computer players seated with the creator (0..maxPlayers-1). */
+  computerPlayers?: number
 }
 
 export interface CreateTableResponse {
@@ -46,6 +48,7 @@ export interface PlayerInfo {
   name: string
   status: PlayerStatus
   chips: number
+  isBot?: boolean
 }
 
 export interface TableInfoResponse {
@@ -134,7 +137,11 @@ export interface PlayerView {
   isSmallBlind: boolean
   isBigBlind: boolean
   bestHand: { name: string; cards: string[] } | null
+  /** Set for computer players; null for humans. */
+  botPersonality: BotPersonality | null
 }
+
+export type BotPersonality = 'AGGRESSIVE' | 'BALANCED' | 'DEFENSIVE'
 
 export interface BlindInfo {
   big: number
@@ -158,6 +165,17 @@ export interface GameStateUpdate {
   turnTimerEndsAt?: number
   /** The recipient's own betting limits while they're in a live betting round. */
   myBettingOptions?: BettingOptions | null
+  /**
+   * Only on a showdown reached before the river: odds for each board the all-in runout will show
+   * (the board when betting ended, then each street through the river).
+   */
+  runoutOdds: RunoutOdds[]
+}
+
+/** Contenders' win probabilities (0..1) with [boardCards] community cards showing. */
+export interface RunoutOdds {
+  boardCards: number
+  equities: { playerId: number; equity: number }[]
 }
 
 /** Chip limits for the local player's next action; raise amounts are on top of the call. */
@@ -190,12 +208,14 @@ export function normalizeGameState(raw: GameStateUpdate): GameStateUpdate {
     readyPlayerIds: raw.readyPlayerIds ?? [],
     activeVotes: raw.activeVotes ?? [],
     message: raw.message ?? null,
+    runoutOdds: raw.runoutOdds ?? [],
     players: raw.players.map((p) => ({
       ...p,
       isDealer: p.isDealer ?? false,
       isSmallBlind: p.isSmallBlind ?? false,
       isBigBlind: p.isBigBlind ?? false,
       bestHand: p.bestHand ?? null,
+      botPersonality: p.botPersonality ?? null,
     })),
   }
 }

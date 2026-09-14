@@ -1,6 +1,7 @@
 package com.gustmmer.poker.server.service
 
 import com.gustmmer.poker.*
+import com.gustmmer.poker.bot.BotPersonality
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.round.*
 import com.gustmmer.poker.server.routes.ActionRequest
@@ -14,6 +15,8 @@ import io.ktor.http.HttpStatusCode
 import org.slf4j.LoggerFactory
 
 data class CreatedTable(val tableId: Int, val playerId: Int)
+
+private val BOT_NAMES = listOf("Ada", "Bishop", "Cleo", "Dex", "Echo", "Finn", "Gizmo", "Hal", "Iris")
 
 /**
  * Orchestrates table lifecycle and in-round actions. Each mutating operation follows one shape:
@@ -41,13 +44,20 @@ class GameService(
             blindEscalationOrbits = request.blindEscalationOrbits,
             blindEscalationMultiplier = request.blindEscalationMultiplier,
             startingBigBlind = request.bigBlind,
+            computerPlayers = request.computerPlayers,
         )
 
         val playerId = 0
         val player = Player(playerId, request.playerName)
-        val table = PokerTable.new(firstPlayer = player, config = config, persistence = persistence)
+        val table = PokerTable.new(firstPlayer = player, config = config, persistence = persistence, bots = computerPlayers(request.computerPlayers))
 
         return CreatedTable(tableId = table.id, playerId = playerId)
+    }
+
+    /** Seats 1..[count], personalities rotating aggressive → balanced → defensive so any mix has variety. */
+    private fun computerPlayers(count: Int): List<Player> = List(count) { i ->
+        val personality = BotPersonality.entries[i % BotPersonality.entries.size]
+        Player(id = i + 1, name = "CPU ${BOT_NAMES[i % BOT_NAMES.size]}", botPersonality = personality)
     }
 
     suspend fun getTableInfo(tableId: Int, sessionPlayerId: Int?): ServiceResult<TableInfoResponse> {
@@ -62,7 +72,7 @@ class GameService(
             TableInfoResponse(
                 tableId = state.id,
                 name = state.config.name,
-                players = state.players.map { PlayerInfo(it.id, it.name, it.status.name, it.chips) },
+                players = state.players.map { PlayerInfo(it.id, it.name, it.status.name, it.chips, it.isBot) },
                 isOpen = state.config.isOpen,
                 maxPlayers = state.config.maxPlayers,
                 sessionPlayerId = sessionPlayerId,

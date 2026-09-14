@@ -34,9 +34,9 @@ data class WireablePokerTableState(
 
 fun PokerTableState.isGameOver(): Boolean = players.participating().size <= 1
 
-/** True when at least half of non-eliminated players are IDLE. */
+/** True when at least half of non-eliminated human players are IDLE. Computer players never idle. */
 fun PokerTableState.majorityIdle(): Boolean {
-    val active = players.filter { it.status != PlayerStatus.ELIMINATED }
+    val active = players.filter { it.status != PlayerStatus.ELIMINATED && !it.isBot }
     if (active.isEmpty()) return false
     return active.count { it.status == PlayerStatus.IDLE } * 2 >= active.size
 }

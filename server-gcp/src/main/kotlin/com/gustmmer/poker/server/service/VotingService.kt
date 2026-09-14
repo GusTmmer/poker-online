@@ -171,13 +171,14 @@ class VotingService(
     }
 
     /**
-     * Who gets a vote: players who are actually present (status ONLINE), read from persisted state so
+     * Who gets a vote: human players who are actually present (status ONLINE; computer players never
+     * vote), read from persisted state so
      * the set is identical on every instance. The initiator is acting right now, so count them in even
      * if their status hasn't caught up. Offline/idle players don't inflate the required-votes denominator
      * (otherwise a vote among a few present players could be mathematically impossible to pass).
      */
     private fun eligibleVoters(s: PokerTableState, resolution: VoteResolution, initiatorId: Int): Set<Int> {
-        val online = s.players.filter { it.status == PlayerStatus.ONLINE }.map { it.id }.toMutableSet()
+        val online = s.players.filter { it.status == PlayerStatus.ONLINE && !it.isBot }.map { it.id }.toMutableSet()
         online.add(initiatorId)
         if (resolution is VoteResolution.KickPlayer) online.remove(resolution.targetPlayerId)
         return online

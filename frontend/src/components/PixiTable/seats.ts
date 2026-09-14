@@ -3,6 +3,7 @@ import type { GameStateUpdate, PlayerView } from '../../api/types'
 import { hex } from '../../theme'
 import { SEAT_STADIUM, CARD_STADIUM, slotPosition } from './layout'
 import { buildSeat, updateSeat } from './drawSeat'
+import { oddsAt } from '../../game/runoutOdds'
 import { makeCardBackPair, makeCardFacePair, makeMiniCardBackPair, CARD_H, PAIR_W } from './drawCard'
 import { MINI_SCALE, MY_CARD_SCALE, MY_CARD_X } from './constants'
 import { tween } from './tween'
@@ -53,6 +54,7 @@ export function updateSeats(
   const mySlot   = slotMap.get(myPlayerId) ?? 0
   const seatCount = Math.max(maxPlayers, players.length, 2)
   const occupied  = new Set<number>()
+  const runoutEquities = scene.runout ? oddsAt(gameState.runoutOdds, scene.runout.boardShown) : null
 
   for (const player of players) {
     const slot = slotMap.get(player.id)!
@@ -66,7 +68,7 @@ export function updateSeats(
 
     let entry = scene.seats.get(player.id)
     if (!entry) {
-      const seatObj = buildSeat(player, isMe, flipLabels)
+      const seatObj = buildSeat(player, isMe, { flipLabels, compact: scene.compact })
       seatObj.root.position.set(seatPosition.x, seatPosition.y)
       scene.seatsLayer.addChild(seatObj.root)
 
@@ -85,13 +87,20 @@ export function updateSeats(
     const isNextToAct = !scene.isDealing && !scene.isCommunityDealing && player.id === nextPlayerIdToAct
     const isWinner    = winnerPlayerIds.has(player.id)
 
-    // Pocket cards show beside a best hand, or on their own while an all-in runout tables them.
+    // Pocket cards show beside a best hand, or on their own — with the odds of winning — while an all-in
+    // runout tables them.
     const hand = showdownHands.get(player.id)
     const tabled = scene.runout != null && player.isActive
     updateSeat(
       entry.seatObj, player, isMe, isNextToAct, isWinner,
-      readyPlayerIds.includes(player.id), roundInProgress,
-      hand, hand || tabled ? showdownPockets.get(player.id) : undefined, flipLabels,
+      // Computer players are always ready.
+      readyPlayerIds.includes(player.id) || player.botPersonality != null, roundInProgress,
+      {
+        hand,
+        pocket: hand || tabled ? showdownPockets.get(player.id) : undefined,
+        equity: tabled ? runoutEquities?.get(player.id) : undefined,
+      },
+      { flipLabels, compact: scene.compact },
     )
 
     // Hide mini card backs at showdown — the hand section already renders the cards.
@@ -156,7 +165,7 @@ function updateMyCards(
   myCardsContainer.removeChildren()
   myCardsContainer.visible = true
 
-  const pair = me.pocketCards ? makeCardFacePair(me.pocketCards) : makeCardBackPair()
+  const pair = me.pocketCards ? makeCardFacePair(me.pocketCards, scene.compact) : makeCardBackPair()
   pair.pivot.set(PAIR_W / 2, CARD_H / 2)
   pair.scale.set(MY_CARD_SCALE)
   myCardsContainer.addChild(pair)

@@ -36,9 +36,10 @@ class PokerClient(private val http: HttpClient) {
         blindEscalationOrbits: Int = 2,
         blindEscalationMultiplier: Double = 2.0,
         bigBlind: Int? = null,
+        computerPlayers: Int = 0,
     ): CreateTableResponse =
         http.post(TablesResource()) {
-            setJsonBody(CreateTableRequest(playerName = playerName, startingChips = startingChips, turnTimerSeconds = turnTimerSeconds, maxPlayers = maxPlayers, blindEscalationOrbits = blindEscalationOrbits, blindEscalationMultiplier = blindEscalationMultiplier, bigBlind = bigBlind))
+            setJsonBody(CreateTableRequest(playerName = playerName, startingChips = startingChips, turnTimerSeconds = turnTimerSeconds, maxPlayers = maxPlayers, blindEscalationOrbits = blindEscalationOrbits, blindEscalationMultiplier = blindEscalationMultiplier, bigBlind = bigBlind, computerPlayers = computerPlayers))
         }.body()
 
     /** Raw create call, for asserting validation errors. */

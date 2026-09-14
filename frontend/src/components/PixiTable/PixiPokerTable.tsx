@@ -39,15 +39,19 @@ interface Props {
   maxPlayers: number
   /** Told when an all-in runout starts and finishes, so lobby controls can wait for the reveal. */
   onRunoutChange?: (playing: boolean) => void
+  /** Phone layout (short screen): simplified cards and seats that fit it — see [SceneState.compact]. */
+  compact?: boolean
 }
 
-export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: Props) {
+export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, compact = false }: Props) {
   const containerRef   = useRef<HTMLDivElement>(null)
   const sceneRef       = useRef<SceneState | null>(null)
   const myPlayerIdRef  = useRef<number>(myPlayerId)
   const maxPlayersRef  = useRef<number>(maxPlayers)
   const cleanupRef     = useRef<(() => void) | null>(null)
   const onRunoutChangeRef = useRef(onRunoutChange)
+  const compactRef     = useRef(compact)
+  const resizeRef      = useRef<(() => void) | null>(null)
 
   // Keep identity refs in sync so the Pixi init callback (created once) and the
   // bus subscription always read current values. Done in an effect — never during
@@ -57,6 +61,16 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
     maxPlayersRef.current = maxPlayers
     onRunoutChangeRef.current = onRunoutChange
   })
+
+  // Switching between the phone and full layouts (e.g. rotating a phone) rebuilds what depends on it.
+  useEffect(() => {
+    compactRef.current = compact
+    const scene = sceneRef.current
+    if (!scene || scene.compact === compact) return
+    scene.compact = compact
+    rebuildForLayout(scene)
+    resizeRef.current?.()
+  }, [compact])
 
   useEffect(() => {
     const container = containerRef.current
@@ -125,7 +139,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
         communityRow, potContainer, myCardsContainer, animLayer,
         seats: new Map(), commCards: [], commDeck: null,
         flyingChips: [], winnerChips: [], floatingDeltas: [], dealCards: [],
-        tweens: [], bursts: [], runout: null, dealEndsAt: 0,
+        tweens: [], bursts: [], runout: null, compact: compactRef.current, dealEndsAt: 0,
         ticker, isDealing: false, isCommunityDealing: false,
         lastApplied: null, myPlayerId: myPlayerIdRef.current, maxPlayers: maxPlayersRef.current,
         retainedShowdownHands: new Map(), retainedPocketCards: new Map(),
@@ -135,8 +149,10 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
       }
       sceneRef.current = scene
 
-      const onResize = () => doResize(container, canvas, app.renderer)
+      const onResize = () => doResize(container, canvas, app.renderer, compactRef.current)
+      resizeRef.current = onResize
       onResize()
+      if (import.meta.env.DEV) exposeLayoutProbe(scene, container, canvas)
       // The container follows the (possibly rotated) game stage; the control bar changes size with
       // its mode and layout. Either one resizing re-fits the table.
       const resizeObserver = new ResizeObserver(onResize)
@@ -167,6 +183,7 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange }: 
 
       cleanupRef.current = () => {
         unsubscribe()
+        resizeRef.current = null
         if (scene.runout) scene.runout.timers.forEach(clearTimeout)
         window.removeEventListener('resize', onResize)
         resizeObserver.disconnect()
@@ -203,11 +220,16 @@ const DEFAULT_BAR_HEIGHT = 88
 // scene (seats, labels and showdown rows) rather than the full 800×560.
 const COMPACT_CONTENT_W = 740
 const COMPACT_CONTENT_H = 500
+// The phone layout keeps every seat — labels and showdown row included — within this box around the
+// table's centre (see the compact branches in drawSeat), so it can be cropped tighter and drawn larger.
+const PHONE_CONTENT_W = 720
+const PHONE_CONTENT_H = 480
 
 function doResize(
   container: HTMLElement,
   canvas: HTMLCanvasElement,
   renderer: { resize: (w: number, h: number, r: number) => void },
+  phone: boolean,
 ) {
   // Layout sizes (offsetWidth & co.) are pre-transform, so they're right inside a rotated stage too.
   const stageW = container.clientWidth || window.innerWidth
@@ -217,10 +239,12 @@ function doResize(
   const pw = sideBar ? stageW - bar.offsetWidth : stageW
   const ph = sideBar ? stageH : stageH - (bar?.offsetHeight ?? DEFAULT_BAR_HEIGHT)
 
-  const compact = sideBar || ph < LH * 0.8
-  const scale = compact
-    ? Math.min(pw / COMPACT_CONTENT_W, ph / COMPACT_CONTENT_H)
-    : Math.min(pw / LW, ph / LH)
+  const compact = phone || sideBar || ph < LH * 0.8
+  const scale = phone
+    ? Math.min(pw / PHONE_CONTENT_W, ph / PHONE_CONTENT_H)
+    : compact
+      ? Math.min(pw / COMPACT_CONTENT_W, ph / COMPACT_CONTENT_H)
+      : Math.min(pw / LW, ph / LH)
   // Crispness: the backing store must map 1:1 onto device pixels. Pick a whole number of device
   // pixels for the width, derive the render resolution from it, and size/place the canvas in
   // exact device-pixel units — a fractional CSS size or offset makes the browser resample the
@@ -232,13 +256,65 @@ function doResize(
   renderer.resize(LW, LH, resolution)
   const snap = (cssPx: number) => Math.round(cssPx * dpr) / dpr
   const w = deviceW / dpr, h = deviceH / dpr
-  // Keep the scene centre (LH/2 - SCENE_Y_OFFSET logical) in the middle of the free area; a cropped
-  // canvas simply overflows the stage edges.
-  const top = compact ? ph / 2 - (LH / 2 - SCENE_Y_OFFSET / 2) * (h / LH) : 0
+  // Keep the scene centre in the middle of the free area; a cropped canvas simply overflows the stage
+  // edges. The phone layout is symmetric about the table's centre; the others lean the crop down,
+  // where the local player's showdown row hangs below their seat.
+  const centreY = phone ? LH / 2 - SCENE_Y_OFFSET : LH / 2 - SCENE_Y_OFFSET / 2
+  const top = compact ? ph / 2 - centreY * (h / LH) : 0
   canvas.style.left   = `${snap((pw - w) / 2)}px`
   canvas.style.top    = `${snap(top)}px`
   canvas.style.width  = `${w}px`
   canvas.style.height = `${h}px`
+}
+
+/**
+ * Redraws everything whose look depends on [SceneState.compact]: seats are rebuilt from scratch, the
+ * board and the local player's cards re-render with the matching card faces.
+ */
+function rebuildForLayout(scene: SceneState) {
+  for (const entry of scene.seats.values()) {
+    scene.seatsLayer.removeChild(entry.seatObj.root)
+    scene.miniCardsLayer.removeChild(entry.miniCards)
+  }
+  scene.seats.clear()
+  scene.myCardsPocketKey = ''
+  if (!scene.isCommunityDealing) renderCommunity(scene, scene.shownCommunity, scene.shownCommunity)
+  refreshSeats(scene)
+}
+
+/**
+ * Dev-only test seam: reports, in game-stage CSS px (before any rotation), the free area beside the
+ * control bar and the box around each seat's avatar, labels and showdown row — so e2e tests can
+ * check that nothing is drawn off screen.
+ */
+function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HTMLCanvasElement) {
+  ;(window as { __pokerLayout?: () => unknown }).__pokerLayout = () => {
+    const stageW = container.clientWidth
+    const stageH = container.clientHeight
+    const bar = container.parentElement?.querySelector<HTMLElement>('[data-testid="control-bar"]')
+    const sideBar = bar != null && bar.offsetHeight >= stageH * 0.9
+    const free = { w: sideBar ? stageW - bar.offsetWidth : stageW, h: sideBar ? stageH : stageH - (bar?.offsetHeight ?? 0) }
+    const left = parseFloat(canvas.style.left), top = parseFloat(canvas.style.top)
+    const k = parseFloat(canvas.style.width) / LW
+    const seats = [...scene.seats.entries()].map(([playerId, { seatObj: s }]) => {
+      const parts = [s.avatar, s.nameText, s.chipsText, s.badges, s.statusContainer, s.handSection]
+        .filter((p) => p.visible && (p.children.length > 0 || p === s.nameText || p === s.chipsText || p === s.avatar))
+        .map((p) => p.getBounds())
+      const x0 = Math.min(...parts.map((b) => b.x)), y0 = Math.min(...parts.map((b) => b.y))
+      const x1 = Math.max(...parts.map((b) => b.x + b.width)), y1 = Math.max(...parts.map((b) => b.y + b.height))
+      return {
+        playerId,
+        hasShowdownRow: s.handSection.children.length > 0,
+        left: left + x0 * k, top: top + y0 * k, right: left + x1 * k, bottom: top + y1 * k,
+      }
+    })
+    const cards = scene.myCardsContainer.visible ? scene.myCardsContainer.getBounds() : null
+    const myCards = cards && {
+      left: left + cards.x * k, top: top + cards.y * k,
+      right: left + (cards.x + cards.width) * k, bottom: top + (cards.y + cards.height) * k,
+    }
+    return { free, compact: scene.compact, seats, myCards }
+  }
 }
 
 // ─── community cards ──────────────────────────────────────────────────────────
@@ -264,7 +340,7 @@ function renderCommunity(scene: SceneState, cards: string[], prevCards: string[]
 
   // Render pre-existing cards (already face-up, no animation)
   for (let i = 0; i < prevCards.length; i++) {
-    const face = makeCardFace(prevCards[i])
+    const face = makeCardFace(prevCards[i], scene.compact)
     face.x = baseX + i * (CARD_W + COMM_GAP)
     scene.communityRow.addChild(face)
   }
@@ -441,7 +517,12 @@ function streetDealMs(cardCount: number) {
 
 function startRunout(scene: SceneState, frame: Frame, streets: number[], onRunout: RunoutListener) {
   const prev = scene.lastApplied
-  const runout = { final: frame, queued: [] as Frame[], timers: [] as ReturnType<typeof setTimeout>[] }
+  const runout = {
+    final: frame,
+    queued: [] as Frame[],
+    timers: [] as ReturnType<typeof setTimeout>[],
+    boardShown: scene.shownCommunity.length,
+  }
   scene.runout = runout
   onRunout(true)
 
@@ -454,7 +535,13 @@ function startRunout(scene: SceneState, frame: Frame, streets: number[], onRunou
   for (const end of streets) {
     const count = end - dealt
     runout.timers.push(setTimeout(() => renderCommunity(scene, cards.slice(0, end), scene.shownCommunity), at))
-    at += streetDealMs(count) + RUNOUT_PAUSE_MS
+    at += streetDealMs(count)
+    // Once the street's cards have turned over, the odds beside each hand move on to that board.
+    runout.timers.push(setTimeout(() => {
+      runout.boardShown = end
+      refreshSeats(scene)
+    }, at))
+    at += RUNOUT_PAUSE_MS
     dealt = end
   }
   runout.timers.push(setTimeout(() => finishRunout(scene, onRunout), at))
