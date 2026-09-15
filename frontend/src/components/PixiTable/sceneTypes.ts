@@ -113,6 +113,11 @@ export interface SceneState {
   winnerPlayerIds: Set<number>
   myCardsPocketKey: string
   lastPotTotal: number
-  lastRoundStage: string | null | undefined
+  /** Everything the pot drawing depends on; redrawn only when it changes. */
+  lastPotKey: string
+  /** Showdown result lines under the pot ("Ada wins — Queen kicker"), kept until the next deal. */
+  retainedPotLines: string[]
+  /** Each pot's winners from the showdown, main pot first — where the payout chips fly from. */
+  retainedPotWinners: number[][]
   potVariant: number
 }

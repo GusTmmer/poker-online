@@ -1,5 +1,6 @@
 import type { GameStateUpdate } from '../api/types'
 import type { BestHand, DeriveContext, GameEvent } from './events'
+import { potWinnerIds } from './potResults'
 
 /**
  * Convert a pair of consecutive snapshots into the list of semantic events that
@@ -102,7 +103,11 @@ export function deriveEvents(
   if (prev.roundStage !== 'SHOWDOWN' && next.roundStage === 'SHOWDOWN') {
     const hands: Record<number, BestHand> = {}
     for (const p of next.players) if (p.bestHand) hands[p.id] = p.bestHand
-    events.push({ kind: 'showdown', hands, winnerIds: winners(next, ctx).map((w) => w.playerId) })
+    // The server names each pot's winners; chip growth is only a fallback (a side-pot winner can
+    // still end the hand down on their stack).
+    const fromPots = potWinnerIds(next.pots)
+    const winnerIds = fromPots.length > 0 ? fromPots : winners(next, ctx).map((w) => w.playerId)
+    events.push({ kind: 'showdown', hands, winnerIds, pots: next.pots })
   }
 
   // Hand ended (everyone folded, or after showdown) → award the pot.

@@ -6,6 +6,7 @@ import com.gustmmer.poker.hand.ShowdownOdds
 import com.gustmmer.poker.hand.TexasHoldEmHandEvaluator
 import com.gustmmer.poker.hand.rankings.HandRanking
 import com.gustmmer.poker.round.PokerRoundStage
+import com.gustmmer.poker.round.potBreakdown
 import com.gustmmer.poker.server.bus.Subscription
 import com.gustmmer.poker.server.bus.TableUpdateBus
 import io.ktor.websocket.*
@@ -46,6 +47,17 @@ data class GameStateUpdate(
      * players will watch being run out (see [ShowdownOdds.forRunout]). Empty otherwise.
      */
     val runoutOdds: List<RunoutOddsView> = emptyList(),
+    /** Main pot first, then side pots; amounts sum to [potTotal]. Winners and reason only at a contested showdown. */
+    val pots: List<PotView> = emptyList(),
+)
+
+@Serializable
+data class PotView(
+    val amount: Int,
+    val contenderIds: List<Int>,
+    val winnerIds: List<Int> = emptyList(),
+    /** What decided the pot when the hand names don't: "Queen kicker", "Split pot". */
+    val reason: String? = null,
 )
 
 @Serializable
@@ -150,8 +162,12 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             RunoutOddsView(street.boardCards, street.equities.map { (id, equity) -> PlayerEquityView(id, equity) })
         }
 
+        val pots = state.roundState?.potBreakdown().orEmpty().map {
+            PotView(it.amount, it.contenderIds, it.winnerIds, it.reason)
+        }
+
         for ((playerId, session) in tableConnections) {
-            val update = buildGameStateUpdate(state, playerId, voteViews, runoutOdds)
+            val update = buildGameStateUpdate(state, playerId, voteViews, runoutOdds, pots)
             val json = Json.encodeToString(update)
             val sent = runCatching { session.send(Frame.Text(json)) }.isSuccess
             if (!sent) {
@@ -179,6 +195,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
         forPlayerId: Int,
         activeVotes: List<VoteSummaryView> = emptyList(),
         runoutOdds: List<RunoutOddsView> = emptyList(),
+        pots: List<PotView> = emptyList(),
     ): GameStateUpdate {
         val roundState = state.roundState
         val isShowdown = roundState?.pokerRoundStage == PokerRoundStage.SHOWDOWN
@@ -251,6 +268,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             turnTimerEndsAt = turnTimerEndsAt,
             myBettingOptions = myBettingOptions,
             runoutOdds = runoutOdds,
+            pots = pots,
         )
     }
 }

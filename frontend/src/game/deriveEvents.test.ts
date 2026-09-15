@@ -35,6 +35,7 @@ function state(over: Partial<GameStateUpdate> = {}): GameStateUpdate {
     activeVotes: [],
     message: null,
     runoutOdds: [],
+    pots: [],
     ...over,
   }
 }
@@ -158,6 +159,26 @@ describe('deriveEvents', () => {
     const evt = deriveEvents(prev, next, ctx).find((e) => e.kind === 'showdown')
     expect(evt).toMatchObject({ kind: 'showdown', winnerIds: [1] })
     if (evt?.kind === 'showdown') expect(evt.hands[1]?.name).toBe('Flush')
+  })
+
+  it('takes showdown winners from the pots, including a side-pot winner who lost chips overall', () => {
+    const ctx = createDeriveContext()
+    const players = [player({ id: 1 }), player({ id: 2 }), player({ id: 3 })]
+    deriveEvents(state({ players }), state({ players, gameStatus: 'RUNNING', roundStage: 'BET_BLINDS' }), ctx)
+    const pots = [
+      { amount: 900, contenderIds: [1, 2, 3], winnerIds: [1], reason: null },
+      { amount: 400, contenderIds: [2, 3], winnerIds: [2], reason: 'Queen kicker' },
+    ]
+    const next = state({
+      gameStatus: 'RUNNING',
+      roundStage: 'SHOWDOWN',
+      // Player 2 put in 500 and won the 400 side pot back: down on the hand, but a winner.
+      players: [player({ id: 1, chips: 1600 }), player({ id: 2, chips: 900 }), player({ id: 3, chips: 500 })],
+      pots,
+    })
+    const evt = deriveEvents(state({ players, gameStatus: 'RUNNING', roundStage: 'BET_RIVER' }), next, ctx)
+      .find((e) => e.kind === 'showdown')
+    expect(evt).toMatchObject({ kind: 'showdown', winnerIds: [1, 2], pots })
   })
 
   it('emits pot_awarded with winner deltas when the hand ends', () => {

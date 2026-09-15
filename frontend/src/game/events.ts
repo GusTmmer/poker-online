@@ -1,4 +1,4 @@
-import type { PlayerStatus, PlayerView } from '../api/types'
+import type { PlayerStatus, PlayerView, PotView } from '../api/types'
 
 /** Non-null best-hand shape, reused from the wire type. */
 export type BestHand = NonNullable<PlayerView['bestHand']>
@@ -35,8 +35,8 @@ export type GameEvent =
   | { kind: 'chips_changed'; playerId: number; delta: number }
   /** A player's connection/seat status changed. */
   | { kind: 'player_status_changed'; playerId: number; status: PlayerStatus }
-  /** Reached showdown — best hands are known and winners decided. */
-  | { kind: 'showdown'; hands: Record<number, BestHand>; winnerIds: number[] }
+  /** Reached showdown — best hands are known and winners decided, per pot in `pots`. */
+  | { kind: 'showdown'; hands: Record<number, BestHand>; winnerIds: number[]; pots: PotView[] }
   /** The hand ended and the pot was awarded — triggers winner chips. */
   | { kind: 'pot_awarded'; winners: { playerId: number; delta: number }[] }
   | { kind: 'game_paused' }

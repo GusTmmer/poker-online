@@ -35,6 +35,10 @@ async function installStateSpy(page: import('@playwright/test').Page) {
               ;(window as { __lastGameState?: unknown }).__lastGameState = data
               // The showdown frame is superseded within moments; keep the odds it carried.
               if (data.runoutOdds?.length) (window as { __lastRunoutOdds?: unknown }).__lastRunoutOdds = data.runoutOdds
+              // Likewise the showdown's pot results.
+              if (data.pots?.some((p: { winnerIds?: number[] }) => p.winnerIds?.length)) {
+                ;(window as { __lastPotResults?: unknown }).__lastPotResults = data.pots
+              }
             }
           } catch { /* ignore */ }
         })
@@ -325,6 +329,73 @@ test.describe('all-in runout', () => {
       await expect(page.locator('[data-testid="revealing"]')).not.toBeVisible()
     } finally {
       await bot.dispose()
+    }
+  })
+})
+
+test.describe('side pots', () => {
+  test('an all-in with three different stacks splits the pot, and each pot names its winner', async ({ page }) => {
+    test.setTimeout(90_000)
+    const bots = await Promise.all([BotClient.create(), BotClient.create(), BotClient.create()])
+    try {
+      const tableId = await bots[0].createTable('Ann', { turnTimerSeconds: 120 })
+      await bots[1].join(tableId, 'Ben')
+      await bots[2].join(tableId, 'Cat')
+      await openTable(page, tableId)
+      await page.fill('input[placeholder="Your name"]', 'Hero')
+      await page.click('button[type="submit"]')
+      await expect.poll(() => gs(page).then((s) => s?.players.length), { timeout: 10_000 }).toBe(4)
+      const me = (await gs(page))!.players.find((p) => p.name === 'Hero')!.id
+
+      /** Plays one hand to the end: Hero folds; each bot's first action is `first(bot)`, then it calls. */
+      const playHand = async (first: (bot: BotClient) => 'FOLD' | 'CALL' | 'ALL_IN') => {
+        await bots[0].startRound(tableId)
+        const acted = new Set<number>()
+        for (let i = 0; i < 100; i++) {
+          const s = await bots[0].getState(tableId)
+          if (s.gameStatus === 'WAITING') return s
+          const bot = bots.find((b) => b.playerId === s.nextPlayerIdToAct)
+          if (s.nextPlayerIdToAct === me) {
+            const fold = page.locator('[data-testid="btn-fold"]')
+            await expect(fold).toBeEnabled({ timeout: 10_000 })
+            await fold.click()
+          } else if (bot) {
+            await bot.act(tableId, acted.has(bot.playerId) ? 'CALL' : first(bot))
+            acted.add(bot.playerId)
+          }
+          await page.waitForTimeout(100)
+        }
+        throw new Error('hand never finished')
+      }
+
+      // Ann folds and the other two check it down, leaving three different stacks (a chopped pot leaves
+      // two equal ones: play again).
+      let stacks: number[] = []
+      for (let hand = 0; hand < 5 && new Set(stacks).size !== 3; hand++) {
+        const s = await playHand((bot) => (bot === bots[0] ? 'FOLD' : 'CALL'))
+        stacks = s.players.filter((p) => p.id !== me).map((p) => p.chips)
+      }
+      expect(new Set(stacks).size).toBe(3)
+
+      // Everyone shoves: the two bigger stacks contest a side pot above the short stack's all-in.
+      await playHand(() => 'ALL_IN')
+
+      type Pot = { amount: number; contenderIds: number[]; winnerIds: number[]; reason?: string }
+      await expect.poll(() => page.evaluate(() => (window as { __lastPotResults?: Pot[] }).__lastPotResults?.length ?? 0), { timeout: 15_000 }).toBe(2)
+      const [main, side] = await page.evaluate(() => (window as { __lastPotResults?: Pot[] }).__lastPotResults!)
+      const [short, middle] = [...stacks].sort((a, b) => a - b)
+      // Folded blinds are dead money in the main pot, on top of three short stacks.
+      expect(main.amount).toBeGreaterThanOrEqual(short * 3)
+      expect(main.contenderIds).toHaveLength(3)
+      expect(side.amount).toBe((middle - short) * 2)
+      expect(side.contenderIds).toHaveLength(2)
+      for (const pot of [main, side]) {
+        expect(pot.winnerIds.length).toBeGreaterThan(0)
+        expect(pot.contenderIds).toEqual(expect.arrayContaining(pot.winnerIds))
+      }
+      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 30_000 })
+    } finally {
+      await Promise.all(bots.map((b) => b.dispose()))
     }
   })
 })

@@ -1,9 +1,7 @@
 package com.gustmmer.poker.round
 
 import com.gustmmer.poker.Player
-import com.gustmmer.poker.active
 import com.gustmmer.poker.canMoreThanOneBet
-import com.gustmmer.poker.hand.TexasHoldEmHandEvaluator
 import com.gustmmer.poker.hand.rankings.PokerHand
 import com.gustmmer.poker.onlyOneIsActive
 import org.slf4j.LoggerFactory
@@ -232,10 +230,7 @@ class PokerRound(state: PokerRoundState) {
         log.debug("Showdown")
         log.debug("Community: {}", communityCards)
 
-        val highestPokerHands = players
-            .active()
-            .map { it to TexasHoldEmHandEvaluator.getMatchingPokerHand(communityCards, it.pocketCards) }
-            .sortedByDescending { (_, hand) -> hand }
+        val highestPokerHands = state.rankedHands()
 
         log.debug("Poker Hands: {}", highestPokerHands)
 
@@ -243,16 +238,10 @@ class PokerRound(state: PokerRoundState) {
     }
 
     private fun resolvePot(pot: Pot, highestPokerHands: List<Pair<Player, PokerHand>>) {
-        val pokerHandsInPot = highestPokerHands.filter { (player, _) -> pot.hasPlayerBet(player) }
-        val (_, winningHand) = pokerHandsInPot.first()
-
-        val winningPlayers = pokerHandsInPot
-            .takeWhile { (_, hand) -> hand.compareTo(winningHand) == 0 }
-            .map { (player, _) -> player }
-            .toSet()
+        val winningPlayers = potWinners(pot, highestPokerHands)
 
         pot.distributeToWinners(winningPlayers)
 
-        log.debug("{} won pot with a {}", winningPlayers, winningHand.ranking)
+        log.debug("{} won {} with a {}", winningPlayers, pot, highestPokerHands.first { it.first in winningPlayers }.second)
     }
 }

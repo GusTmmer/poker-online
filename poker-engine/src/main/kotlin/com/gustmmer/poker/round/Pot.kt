@@ -55,6 +55,9 @@ class Pot(
         return player in betsByPlayer
     }
 
+    /** Everyone with chips in this pot, folded players included. */
+    fun contributors(): Set<Player> = betsByPlayer.keys
+
     fun playerBet(player: Player): Int {
         return betsByPlayer.getOrDefault(player, 0)
     }

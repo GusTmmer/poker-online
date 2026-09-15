@@ -19,7 +19,7 @@ import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
-/** The win-probability odds that ride along a showdown frame when an all-in board is run out. */
+/** What rides along a showdown frame: the runout's win-probability odds and each pot's result. */
 class RunoutOddsBroadcastTest {
 
     private val config = ServerConfig(port = 8080, jwtSecret = "runout-odds-test-secret", firestoreProjectId = "test")
@@ -103,4 +103,33 @@ class RunoutOddsBroadcastTest {
             assertTrue(incoming.showdownFrame().odds().isEmpty())
         }
     }
+
+    @Test
+    fun `pots add up to the pot total and name their winners only at showdown`() = testApplication {
+        val t = seatHeadsUp()
+        t.aliceHttp.webSocket("/ws/tables/${t.id}") {
+            withTimeout(5_000) { incoming.nextState() }
+            assertTrue(t.alice.startRound(t.id).isOk())
+            assertTrue(t.alice.allIn(t.id).isOk())
+            assertTrue(t.bob.call(t.id).isOk())
+
+            val showdown = withTimeout(5_000) {
+                var state = incoming.nextState()
+                while (!state.isShowdown) {
+                    val pots = state.pots()
+                    assertEquals(state["potTotal"]!!.jsonPrimitive.int, pots.sumOf { it["amount"]!!.jsonPrimitive.int })
+                    pots.forEach { assertTrue(it["winnerIds"]?.jsonArray.isNullOrEmpty(), "no winners before showdown: $state") }
+                    state = incoming.nextState()
+                }
+                state
+            }
+
+            val pot = showdown.pots().single()
+            assertEquals(2000, pot["amount"]!!.jsonPrimitive.int)
+            assertEquals(listOf(0, 1), pot["contenderIds"]!!.jsonArray.map { it.jsonPrimitive.int })
+            assertFalse(pot["winnerIds"]!!.jsonArray.isEmpty())
+        }
+    }
+
+    private fun JsonObject.pots(): List<JsonObject> = this["pots"]?.jsonArray?.map { it.jsonObject }.orEmpty()
 }

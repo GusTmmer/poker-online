@@ -3,6 +3,7 @@ import { Application, Container, Ticker } from 'pixi.js'
 import type { GameStateUpdate } from '../../api/types'
 import type { GameEvent } from '../../game/events'
 import type { Frame, FrameBus } from '../../game/frameBus'
+import { potResultLines } from '../../game/potResults'
 import {
   LW, LH, SCENE_Y_OFFSET,
   CARD_STADIUM,
@@ -19,7 +20,7 @@ import {
   COMM_SCALE, COMM_GAP, commRowW,
 } from './constants'
 import type { SceneState } from './sceneTypes'
-import { POT_Y, randomPotVariant, updatePot } from './pot'
+import { POT_Y, potSlotX, randomPotVariant, updatePot } from './pot'
 import { spawnBetChips, spawnDelta, spawnWinnerChips } from './chips'
 import { spawnActionBurst } from './burst'
 import { tween, cancelTweens } from './tween'
@@ -146,9 +147,9 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
         tweens: [], bursts: [], runout: null, held: [], holdUntil: 0, holdTimer: null, compact: compactRef.current, dealEndsAt: 0,
         ticker, isDealing: false, isCommunityDealing: false,
         lastApplied: null, myPlayerId: myPlayerIdRef.current, maxPlayers: maxPlayersRef.current,
-        retainedShowdownHands: new Map(), retainedPocketCards: new Map(),
+        retainedShowdownHands: new Map(), retainedPocketCards: new Map(), retainedPotLines: [], retainedPotWinners: [],
         shownCommunity: [], winnerPlayerIds: new Set(),
-        myCardsPocketKey: '', lastPotTotal: -1, lastRoundStage: undefined,
+        myCardsPocketKey: '', lastPotTotal: -1, lastPotKey: '',
         potVariant: randomPotVariant(),
       }
       sceneRef.current = scene
@@ -285,6 +286,7 @@ function rebuildForLayout(scene: SceneState) {
   scene.seats.clear()
   scene.myCardsPocketKey = ''
   if (!scene.isCommunityDealing) renderCommunity(scene, scene.shownCommunity, scene.shownCommunity)
+  if (scene.lastApplied) updatePot(scene, scene.lastApplied)
   refreshSeats(scene)
 }
 
@@ -650,6 +652,7 @@ function maskRunoutState(prev: GameStateUpdate | null, next: GameStateUpdate, sh
     ...next,
     communityCards: shownCommunity,
     nextPlayerIdToAct: null,
+    pots: next.pots.map((pot) => ({ ...pot, winnerIds: [], reason: null })),
     players: next.players.map((p) => {
       const before = prev?.players.find((q) => q.id === p.id)
       if (!before) return { ...p, bestHand: null }
@@ -666,7 +669,7 @@ function maskRunoutState(prev: GameStateUpdate | null, next: GameStateUpdate, sh
 function applySnapshot(scene: SceneState, state: GameStateUpdate, cold: boolean) {
   scene.lastApplied = state
 
-  updatePot(scene, state.potTotal, state.roundStage, state.blinds.big)
+  updatePot(scene, state)
 
   // Community: clear on reset; render the whole row instantly on a cold frame
   // (reconnect / first paint). Warm additions arrive via 'community_revealed'.
@@ -693,6 +696,9 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       scene.winnerPlayerIds.clear()
       scene.retainedShowdownHands.clear()
       scene.retainedPocketCards.clear()
+      scene.retainedPotLines = []
+      scene.retainedPotWinners = []
+      if (scene.lastApplied) updatePot(scene, scene.lastApplied)
       if (scene.shownCommunity.length > 0) renderCommunity(scene, [], [])
       startDeal(scene)
       refreshSeats(scene)
@@ -757,6 +763,8 @@ function handleEvent(scene: SceneState, event: GameEvent) {
           .map((p) => [p.id, p.pocketCards!]),
       )
       scene.winnerPlayerIds = new Set(event.winnerIds)
+      scene.retainedPotLines = potResultLines(event.pots, scene.lastApplied?.players ?? [])
+      scene.retainedPotWinners = event.pots.map((pot) => pot.winnerIds)
       refreshSeats(scene)  // green halos + hands on the same frame
       break
 
@@ -765,7 +773,15 @@ function handleEvent(scene: SceneState, event: GameEvent) {
       if (scene.winnerPlayerIds.size === 0)
         scene.winnerPlayerIds = new Set(event.winners.map((w) => w.playerId))
       refreshSeats(scene)
-      for (const w of event.winners) spawnWinnerChips(scene, { x: 0, y: POT_Y }, pilePos(scene, w.playerId))
+      if (scene.retainedPotWinners.length > 1) {
+        // Side pots: each pot's chips go from its own stack to its own winners.
+        const count = scene.retainedPotWinners.length
+        scene.retainedPotWinners.forEach((ids, i) => {
+          for (const id of ids) spawnWinnerChips(scene, { x: potSlotX(i, count, scene.compact), y: POT_Y }, pilePos(scene, id))
+        })
+      } else {
+        for (const w of event.winners) spawnWinnerChips(scene, { x: 0, y: POT_Y }, pilePos(scene, w.playerId))
+      }
       break
 
     // Fully reflected by applySnapshot (turn halo via nextPlayerIdToAct, pot via

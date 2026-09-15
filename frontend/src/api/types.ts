@@ -170,6 +170,18 @@ export interface GameStateUpdate {
    * (the board when betting ended, then each street through the river).
    */
   runoutOdds: RunoutOdds[]
+  /** Main pot first, then side pots; amounts sum to `potTotal`. Empty when no hand is in play. */
+  pots: PotView[]
+}
+
+/** One pot. `winnerIds` and `reason` are only set at a contested showdown. */
+export interface PotView {
+  amount: number
+  /** Players still in the hand with chips in this pot. */
+  contenderIds: number[]
+  winnerIds: number[]
+  /** What decided the pot when the hand names don't: "Queen kicker", "Split pot". */
+  reason: string | null
 }
 
 /** Contenders' win probabilities (0..1) with [boardCards] community cards showing. */
@@ -209,6 +221,12 @@ export function normalizeGameState(raw: GameStateUpdate): GameStateUpdate {
     activeVotes: raw.activeVotes ?? [],
     message: raw.message ?? null,
     runoutOdds: raw.runoutOdds ?? [],
+    pots: (raw.pots ?? []).map((pot) => ({
+      amount: pot.amount,
+      contenderIds: pot.contenderIds ?? [],
+      winnerIds: pot.winnerIds ?? [],
+      reason: pot.reason ?? null,
+    })),
     players: raw.players.map((p) => ({
       ...p,
       isDealer: p.isDealer ?? false,

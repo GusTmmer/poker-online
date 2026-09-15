@@ -34,6 +34,7 @@ function state(over: Partial<GameStateUpdate> = {}): GameStateUpdate {
     activeVotes: [],
     message: null,
     runoutOdds: [],
+    pots: [],
     ...over,
   }
 }
