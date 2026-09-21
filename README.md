@@ -7,6 +7,10 @@ that still fits inside a free tier.
 
 **Stack:** Kotlin (JVM 21) · Ktor · Firestore · Cloud Tasks · Cloud Run · React 19 · TypeScript · Pixi.js v8
 
+**Play it here: [poker-server-xz4wcwbsoq-uc.a.run.app](https://poker-server-xz4wcwbsoq-uc.a.run.app)** —
+deployed on Cloud Run, scaled to zero when idle, so the first load may take a few seconds to wake up.
+Create a table, seat a couple of computer players, and you can play a full hand on your own.
+
 ---
 
 ## What it does
@@ -14,16 +18,52 @@ that still fits inside a free tier.
 **Gameplay**
 - Complete Texas Hold'em hand: blinds, four betting rounds (pre-flop → river), **side pots**,
   showdown hand evaluation, and automatic **blind escalation** over time.
+- Full **no-limit** betting rules: minimum raise = max(big blind, last raise size), an all-in under a
+  full raise doesn't reopen the action, and heads-up the button posts the small blind and acts first
+  pre-flop, last after the flop.
 - Real-time multiplayer: every table change is pushed to all seated players over a WebSocket, and
   the table is drawn on a Pixi.js canvas with dealing, chip, and card animations.
 - Per-player turn timers with **auto-fold**; players can disconnect and reconnect mid-hand.
 
+**Computer players**
+- Seat up to `maxPlayers - 1` **bots** when creating a table, so a hand is playable solo.
+- Three personalities — *aggressive* (loose-aggressive), *balanced* (tight-aggressive) and
+  *defensive* (rock) — that differ in opening ranges, aggression and bet sizing.
+- They play from a strict **information barrier**: a bot only ever sees its own pocket cards, the
+  face-up board, stacks/bets/positions and the public action log — never another player's cards.
+- Decisions are computed, not scripted: pre-flop from a generated **169-hand-class percentile chart**,
+  post-flop from a **Monte Carlo equity** calculation against opponent ranges narrowed by how those
+  opponents have actually acted. The only randomness is a single bounded roll (≤10%), and the
+  simulation is seeded from the visible cards, so behaviour is deterministic and testable.
+- A test-side simulation harness measures each profile's poker statistics (VPIP / PFR / aggression
+  factor / steal frequency) and the tuning test asserts they stay in their intended band.
+
 **Table lifecycle & social controls**
 - Create a table (with a human-friendly **name**) or join one by id; ready-up and start rounds.
+- **Invite links** — a table's URL doubles as its join page, showing the table name and who's already
+  seated; "Copy invite link" sits in the in-game menu, and the home screen accepts a pasted link or a
+  bare table id.
 - **Democratic controls via voting** — pause/unpause, kick an absent player, restart the game, or
   increase the blinds all require a table vote rather than an admin.
 - **"My tables"** — the home screen surfaces every table this browser holds a session for and lets
   you rejoin with one click, or **permanently leave** (which frees your seat for a new player).
+
+**At the table**
+- **Paced action.** Bets, raises, all-ins and folds each get their own callout on the felt, and
+  frames queue behind deals and street reveals — so a bot's instant fold never lands mid-deal, and
+  consecutive actions play one at a time. Only the canvas waits; the action bar always reads live state.
+- **All-in runout.** When everyone is all-in, the hands are tabled and the remaining board is dealt a
+  street at a time, each tabled hand showing its **chance of winning** as the cards turn over (exact
+  from the flop on, sampled pre-flop). Winners and payouts only play once the board is out.
+- **Pots that explain themselves.** A single pot splits into a MAIN / SIDE row when an all-in
+  requires it; after a showdown each pot shows who won it and *why* — "Ada wins — Queen kicker",
+  "higher Sevens", "Split pot" — and the payout chips fly from each pot to its own winners. The
+  pocket cards that actually play are ringed in gold, the unused ones dimmed.
+- **Chips as objects.** Each seat's stack is a pile of clay chips on the felt, sized against the
+  table average; bets fly from pile to pot and winnings back again.
+- **Phone layout.** On a phone held in portrait the stage rotates to landscape, the action bar
+  becomes a side column, and the scene switches to a tighter crop with simplified card faces — a
+  six-way showdown still fits on screen (asserted by an E2E layout test).
 
 ## Tech stack
 
@@ -41,6 +81,7 @@ that still fits inside a free tier.
 
 ```
 poker-engine/   Pure Kotlin game logic — no server, no cloud. Fully unit-tested.
+  bot/          Computer players: information barrier, pre-flop chart, equity + range models.
 server-gcp/     Ktor HTTP + WebSocket server. Persistence, voting, timers, auth.
 frontend/       React + Pixi.js single-page app (Vite). Playwright E2E suite.
 docs/           Architecture write-ups (see "Further reading").
@@ -119,6 +160,8 @@ AWS-analogy glossary are in [`docs/architecture-gcp.md`](docs/architecture-gcp.m
 | **Per-table JWT session cookies** | A player can hold independent sessions across many tables; each is httpOnly and scoped | One global session / server-side session store |
 | **Serve the SPA from Cloud Run** | Same-origin → no CORS, no cross-site cookie config | Separate static host that can't proxy WebSockets |
 | **`minScale=0` + budget kill-switch** | $0 at idle, and a hard spend cap makes an accidental bill impossible for a portfolio | Always-on instances; WAF/Load Balancer (both incur cost) |
+| **Bots decide from a read-only view of the hand** | One narrow type is the *only* input to a bot's decision, so it can't accidentally see hole cards, and strategy is unit-testable in isolation | Letting the strategy read the live round object |
+| **Bot turns use the same durable timer as humans** | A bot's "thinking time" is just a Cloud Task, so it survives scale-to-zero like any other turn — no background loop to keep alive | An in-process timer per seated bot |
 
 ---
 
@@ -144,6 +187,14 @@ Open the printed URL, and a second browser profile to join as another player. Fu
 ./gradlew test                 # Kotlin engine + server (unit + integration)
 cd frontend && npm run test:e2e # Playwright E2E + visual regression (needs both servers running)
 ```
+
+## Deployment
+
+The live game runs at
+**[poker-server-xz4wcwbsoq-uc.a.run.app](https://poker-server-xz4wcwbsoq-uc.a.run.app)**.
+Pushing to `main` triggers Cloud Build: unit tests → Docker image (server + bundled SPA) → push to
+Artifact Registry → `gcloud run services replace` pinned to that image tag. One-time IAM and trigger
+setup is in [`infra/README.md`](infra/README.md).
 
 ## Further reading
 
