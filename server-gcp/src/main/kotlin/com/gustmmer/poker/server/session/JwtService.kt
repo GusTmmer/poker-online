@@ -7,17 +7,29 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import java.time.Instant
+import java.time.temporal.ChronoUnit
+import java.util.Date
 
 data class PlayerSession(val tableId: Int, val playerId: Int)
 
 class JwtService(secret: String, private val secureCookies: Boolean = false) {
     private val algorithm = Algorithm.HMAC256(secret)
+    // The verifier rejects an expired token automatically once the `exp` claim is present.
     private val verifier = JWT.require(algorithm).build()
 
+    /**
+     * Signs a session token for `(tableId, playerId)` that expires after [TOKEN_TTL_HOURS]. A bounded
+     * lifetime means a leaked cookie can't be replayed forever — and the window comfortably covers a
+     * table's own 12h Firestore TTL, so a live table never outlives its players' sessions.
+     */
     fun createToken(tableId: Int, playerId: Int): String {
+        val now = Instant.now()
         return JWT.create()
             .withClaim("tableId", tableId)
             .withClaim("playerId", playerId)
+            .withIssuedAt(Date.from(now))
+            .withExpiresAt(Date.from(now.plus(TOKEN_TTL_HOURS, ChronoUnit.HOURS)))
             .sign(algorithm)
     }
 
@@ -65,6 +77,9 @@ class JwtService(secret: String, private val secureCookies: Boolean = false) {
     companion object {
         /** Prefix for every per-table session cookie. Enumerated by the "my tables" discovery endpoint. */
         const val COOKIE_PREFIX = "poker_table_"
+
+        /** Session-token lifetime. Kept above a table's 12h Firestore TTL so a live table's sessions stay valid. */
+        const val TOKEN_TTL_HOURS = 24L
     }
 }
 

@@ -48,7 +48,7 @@ class GameService(
         )
 
         val playerId = 0
-        val player = Player(playerId, request.playerName)
+        val player = Player(playerId, normalizePlayerName(request.playerName))
         val table = PokerTable.new(firstPlayer = player, config = config, persistence = persistence, bots = computerPlayers(request.computerPlayers))
 
         return CreatedTable(tableId = table.id, playerId = playerId)
@@ -123,12 +123,14 @@ class GameService(
     }
 
     suspend fun joinTable(tableId: Int, playerName: String): ServiceResult<JoinResponse> {
+        val name = normalizePlayerName(playerName)
+        if (name.isBlank()) return ServiceResult.Failed(HttpStatusCode.BadRequest, "Player name is required")
         val result = withTable(tableId, persistence) { table ->
             val playerId = (table.currentState.players.maxOfOrNull { it.id } ?: -1) + 1
-            if (!table.playerJoin(Player(playerId, playerName))) {
+            if (!table.playerJoin(Player(playerId, name))) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.Forbidden, "Table is full or closed")
             }
-            ServiceResult.Ok(JoinResponse(playerId = playerId, playerName = playerName), HttpStatusCode.Created)
+            ServiceResult.Ok(JoinResponse(playerId = playerId, playerName = name), HttpStatusCode.Created)
         }
         // Broadcast is driven by the commit (the bus subscription), so there's nothing to push here.
         return result
@@ -138,7 +140,16 @@ class GameService(
         val command: PlayerCommand = when (request.type.uppercase()) {
             "FOLD" -> Fold(playerId)
             "CALL" -> Call(playerId)
-            "RAISE" -> Raise(playerId, request.value ?: 0)
+            "RAISE" -> {
+                val raiseBy = request.value ?: 0
+                // Cap before it reaches the engine's chip arithmetic: any real raise is bounded by the
+                // total chips in play (< MAX_RAISE), and an unbounded value could overflow Int when added
+                // to an existing bet. The engine still enforces the true min/max for realistic amounts.
+                if (raiseBy > MAX_RAISE) {
+                    return ServiceResult.Failed(HttpStatusCode.BadRequest, "Raise amount is too large")
+                }
+                Raise(playerId, raiseBy)
+            }
             "ALL_IN" -> AllIn(playerId)
             else -> return ServiceResult.Failed(HttpStatusCode.BadRequest, "Invalid action")
         }
@@ -284,4 +295,19 @@ class GameService(
 
     /** Trim and length-cap a user-supplied table name so it stays a sane, storable label. */
     private fun normalizeTableName(raw: String): String = raw.trim().take(TableConfig.MAX_NAME_LENGTH)
+
+    /**
+     * Trim and length-cap a user-supplied player name. Unlike the table name this is stored per player
+     * and echoed to everyone on every frame, so an uncapped value is a storage/bandwidth amplifier —
+     * cap it at the source (both create and join go through here).
+     */
+    private fun normalizePlayerName(raw: String): String = raw.trim().take(MAX_PLAYER_NAME_LENGTH)
+
+    companion object {
+        /** Length cap for a stored player name. */
+        const val MAX_PLAYER_NAME_LENGTH = 40
+
+        /** Upper bound on a single raise increment — well above total chips in play, but overflow-safe. */
+        const val MAX_RAISE = 1_000_000_000
+    }
 }
