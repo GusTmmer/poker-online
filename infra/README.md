@@ -67,13 +67,17 @@ gcloud artifacts repositories create poker \
 # Keep storage under the 0.5 GB always-free limit: keep only the most recent few images.
 cat > /tmp/cleanup.json <<'EOF'
 [
-  {"name":"keep-recent","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":3}},
-  {"name":"delete-old","action":{"type":"Delete"},"condition":{"olderThan":"604800s"}}
+  {"name":"keep-3-recent","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":3}},
+  {"name":"delete-older-than-7-days","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"604800s"}}
 ]
 EOF
 gcloud artifacts repositories set-cleanup-policies poker \
-  --location="$REGION" --policy=/tmp/cleanup.json
+  --location="$REGION" --policy=/tmp/cleanup.json --no-dry-run
 ```
+
+`--no-dry-run` matters: `set-cleanup-policies` defaults to **dry run**, which only logs what it would
+delete. The live repo sat in dry run for its first three weeks and grew past the free 0.5 GB (~137 MB
+per image). The function's `gcf-artifacts` repo gets the same treatment with `keepCount: 1`.
 
 ## 4. Secrets (JWT + internal token)
 
@@ -120,7 +124,10 @@ gcloud builds submit --region="$REGION" \
 
 `--service-account` is required (§5 — the default compute SA can't read its own source tarball out of
 the Cloud Build staging bucket without extra grants). Once you pass `--service-account`, gcloud also
-requires you to pick a logs-bucket behavior, hence `--default-buckets-behavior`.
+requires you to pick a logs-bucket behavior, hence `--default-buckets-behavior`. A manual submit
+uploads a ~60 MB source tarball to a `*_cloudbuild` staging bucket and leaves it there; delete it
+afterwards (triggered builds clone from GitHub and stage nothing). Day to day, push to `main` instead
+(see CI/CD below).
 
 ```bash
 # Edit infra/cloudrun-service.yaml: replace PROJECT_ID, confirm the image tag, then:
@@ -294,6 +301,9 @@ These cost real time; read before you start rather than after you hit them.
 - **`gcloud run services replace` has no service-account flag.** Set `serviceAccountName` inside the
   YAML itself, or the revision runs as the (roleless) default compute SA and every Secret Manager env
   var fails closed at deploy time.
+- **Cloud Build's free 2,500 build-minutes/month only apply to the default `e2-standard-2` machine.**
+  Setting `options.machineType` (e.g. `E2_HIGHCPU_8`) bills every minute: ~R$0.45 per ~4-min build,
+  which was the entire R$3.25 September bill. Leave it unset.
 - **Billing account currency isn't necessarily USD.** `--budget-amount=5USD` fails outright if the
   billing account's own currency differs — match it or omit the currency suffix.
 - **New Cloud Run URLs can take a long time (tens of minutes) to become routable** the very first time

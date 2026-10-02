@@ -51,6 +51,7 @@ options:
   dynamicSubstitutions: true
   # A user-managed build service account has no default logs bucket; log to Cloud Logging only.
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_HIGHCPU_8
+  # No machineType: the 2,500 free build-minutes/month only cover the default e2-standard-2. A bigger
+  # machine (E2_HIGHCPU_8 was here) is billed from the first minute — it was the whole Sept bill.
 
 timeout: 1800s

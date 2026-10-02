@@ -43,11 +43,23 @@ resource "google_artifact_registry_repository" "poker" {
   format        = "DOCKER"
   depends_on    = [google_project_service.apis]
 
+  cleanup_policy_dry_run = false # gcloud defaults to dry run, which deletes nothing
+
   cleanup_policies {
-    id     = "keep-recent"
+    id     = "keep-3-recent"
     action = "KEEP"
     most_recent_versions {
       keep_count = 3
+    }
+  }
+
+  # KEEP alone deletes nothing; this removes everything the KEEP rule doesn't protect.
+  cleanup_policies {
+    id     = "delete-older-than-7-days"
+    action = "DELETE"
+    condition {
+      tag_state  = "ANY"
+      older_than = "604800s"
     }
   }
 }
