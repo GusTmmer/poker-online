@@ -163,6 +163,11 @@ export interface GameStateUpdate {
   message: string | null
   /** Epoch-ms when the current turn timer expires. Absent when no timer is running. */
   turnTimerEndsAt?: number
+  /**
+   * Epoch-ms when the countdown to `turnTimerEndsAt` starts. Until then the table is still animating what
+   * led to the turn, and the clock holds at the full turn.
+   */
+  turnClockStartsAt?: number | null
   /** The recipient's own betting limits while they're in a live betting round. */
   myBettingOptions?: BettingOptions | null
   /**

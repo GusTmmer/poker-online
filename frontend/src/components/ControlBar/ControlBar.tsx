@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import { useErrorFlash } from '../../hooks/useErrorFlash'
 import styled from '@emotion/styled'
 import type { ActionType, GameStateUpdate } from '../../api/types'
@@ -6,6 +6,7 @@ import { selectControls } from '../../game/selectors'
 import { readyUp, sendAction, startRound, setPlayerOnline, restartGame } from '../../api/client'
 import { VotingMenu } from './VotingMenu'
 import { raiseStep, snapRaiseValue } from './snapRaiseValue'
+import { sliderFraction, sliderValueAt } from './sliderPosition'
 import { TurnTimer } from '../TurnTimer/TurnTimer'
 import { gradient, palette } from '../../theme'
 
@@ -50,7 +51,7 @@ const Bar = styled.div<{ compact: boolean }>`
     border-left: 1px solid rgba(216, 182, 90, 0.55);
     box-shadow: -2px 0 0 rgba(0, 0, 0, 0.6), -0.4rem 0 1.4rem rgba(0, 0, 0, 0.55);
 
-    & button[data-testid] { width: 100%; padding: 0.55rem 0.4rem; font-size: 0.7rem; }
+    & > button[data-testid] { width: 100%; padding: 0.55rem 0.4rem; font-size: 0.7rem; }
     & input[type='range'] { width: 100%; }
   `}
 `
@@ -121,6 +122,24 @@ const SliderWrap = styled.div`
   flex-shrink: 0;
 `
 
+/** The thumb's size along the track, for mapping a pointer onto the slider like the native input does. */
+const THUMB_PX = 18
+
+/**
+ * The slider's hit area. It does its own dragging rather than leaving it to the native range input: with
+ * `touch-action: none` the browser never takes a finger drag for a pan gesture, so a drag works however it
+ * starts — the native input only followed the finger once a gesture had started the other way (on the
+ * rotated phone stage the slider runs down the physical screen). It's also a taller, easier target than the
+ * thin track.
+ */
+const SliderTrack = styled.div<{ disabled: boolean }>`
+  width: 100%;
+  padding: 0.7rem 0;
+  margin: -0.7rem 0;
+  touch-action: none;
+  cursor: ${(p) => (p.disabled ? 'not-allowed' : 'pointer')};
+`
+
 const RangeInput = styled('input', { shouldForwardProp: (p) => p !== 'fillPercent' })<{
   fillPercent: number
 }>`
@@ -140,6 +159,10 @@ const RangeInput = styled('input', { shouldForwardProp: (p) => p !== 'fillPercen
   );
   border: 1px solid #3a2e10;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+
+  /* Dragging belongs to SliderTrack; the input stays for its look, value and keyboard. */
+  pointer-events: none;
+  display: block;
 
   &::-webkit-slider-runnable-track {
     height: 4px;
@@ -258,7 +281,7 @@ function ControlBarShell({
     <Bar data-testid="control-bar" compact={compact}>
       {children}
       <CornerMenu compact={compact}>
-        <VotingMenu gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} />
+        <VotingMenu gameState={gameState} myPlayerId={myPlayerId} tableId={tableId} openDown={compact} />
       </CornerMenu>
       <RightSlot compact={compact}>
         <TurnTimer gameState={gameState} myPlayerId={myPlayerId} />
@@ -281,6 +304,7 @@ export function ControlBar({
   const [busy, setBusy] = useState(false)
   const { failed: actionFailed, message: actionError, showError } = useErrorFlash(4000)
   const step = raiseStep(gameState.blinds.small)
+  const sliderRef = useRef<HTMLInputElement>(null)
 
   async function withBusy(fn: () => Promise<unknown>, onSuccess?: () => void) {
     setBusy(true)
@@ -306,6 +330,14 @@ export function ControlBar({
     setRaiseValue(snapRaiseValue(raw, minRaise, maxRaiseOnTop, step))
   }
 
+  function dragSliderTo(e: PointerEvent) {
+    const input = sliderRef.current
+    if (!input) return
+    const rotated = input.closest('[data-rotated="true"]') != null
+    const fraction = sliderFraction({ x: e.clientX, y: e.clientY }, input.getBoundingClientRect(), rotated, THUMB_PX)
+    handleSliderChange(sliderValueAt(fraction, maxRaiseOnTop, step))
+  }
+
   const shellProps = { gameState, myPlayerId, tableId, compact }
 
   if (mode === 'spectating') {
@@ -320,7 +352,7 @@ export function ControlBar({
   if (mode === 'idle') {
     return (
       <ControlBarShell {...shellProps}>
-        <Button variant="primary" disabled={busy} onClick={handleActivate}>
+        <Button data-testid="btn-im-back" variant="primary" disabled={busy} onClick={handleActivate}>
           I&#39;m back
         </Button>
         {actionFailed && <ActionError>{actionError ?? 'Could not reactivate'}</ActionError>}
@@ -356,6 +388,7 @@ export function ControlBar({
   const isAllIn = canRaise && raiseValue > 0 && raiseValue === maxRaiseOnTop
   const callLabel = amountToCall > 0 ? 'Call' : 'Check'
   const fillPercent = maxRaiseOnTop > 0 ? (raiseValue / maxRaiseOnTop) * 100 : 0
+  const cantAct = !isMyTurn || busy
 
   function handleMainAction() {
     if (isCalling) return handleAction('CALL')
@@ -365,14 +398,14 @@ export function ControlBar({
 
   return (
     <ControlBarShell {...shellProps}>
-      <Button data-testid="btn-fold" variant="danger" disabled={!isMyTurn || busy} onClick={() => handleAction('FOLD')}>
+      <Button data-testid="btn-fold" variant="danger" disabled={cantAct} onClick={() => handleAction('FOLD')}>
         Fold
       </Button>
       <Button
         data-testid="btn-call"
         fixedWidth
         variant={isAllIn ? 'primary' : undefined}
-        disabled={!isMyTurn || busy}
+        disabled={cantAct}
         onClick={handleMainAction}
       >
         {isCalling ? (
@@ -388,16 +421,30 @@ export function ControlBar({
       {actionFailed && <ActionError>{actionError ?? 'Action failed'}</ActionError>}
       {canRaise && (
         <SliderWrap>
-          <RangeInput
-            type="range"
-            fillPercent={fillPercent}
-            min={0}
-            max={maxRaiseOnTop}
-            step={step}
-            value={raiseValue}
-            disabled={!isMyTurn || busy}
-            onChange={(e) => handleSliderChange(Number(e.target.value))}
-          />
+          <SliderTrack
+            disabled={cantAct}
+            onPointerDown={(e) => {
+              if (cantAct) return
+              e.currentTarget.setPointerCapture(e.pointerId)
+              sliderRef.current?.focus()
+              dragSliderTo(e)
+            }}
+            onPointerMove={(e) => {
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) dragSliderTo(e)
+            }}
+          >
+            <RangeInput
+              ref={sliderRef}
+              type="range"
+              fillPercent={fillPercent}
+              min={0}
+              max={maxRaiseOnTop}
+              step={step}
+              value={raiseValue}
+              disabled={cantAct}
+              onChange={(e) => handleSliderChange(Number(e.target.value))}
+            />
+          </SliderTrack>
           <span>
             {raiseValue > 0 ? (
               isAllIn ? (

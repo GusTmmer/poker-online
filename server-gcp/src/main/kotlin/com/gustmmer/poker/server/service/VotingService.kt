@@ -6,6 +6,7 @@ import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PokerTableState
 import com.gustmmer.poker.persistence.PokerTablePersistence
+import com.gustmmer.poker.turnTimeRemainingMs
 import com.gustmmer.poker.server.routes.VoteSessionResponse
 import com.gustmmer.poker.server.routes.toResponse
 import com.gustmmer.poker.server.timer.TaskScheduler
@@ -196,10 +197,7 @@ class VotingService(
     private fun applyResolution(table: PokerTable, resolution: VoteResolution): ResolutionEffect = when (resolution) {
         is VoteResolution.PauseGame -> {
             val s = table.currentState
-            val remaining = s.turnTimerStartedAt?.let {
-                (s.config.turnTimerSeconds * 1000L - (System.currentTimeMillis() - it)).coerceAtLeast(0)
-            }
-            table.pause(remaining)
+            table.pause(s.turnTimeRemainingMs(System.currentTimeMillis()))
             ResolutionEffect.Paused
         }
         is VoteResolution.UnpauseGame -> ResolutionEffect.Unpaused(table.unpause())

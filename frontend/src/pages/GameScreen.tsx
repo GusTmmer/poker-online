@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState, type PointerEvent } from 'react'
 import styled from '@emotion/styled'
 import { useNavigate } from 'react-router-dom'
 import { useSession } from '../context/SessionContext'
 import { useGameSocket } from '../ws/useGameSocket'
 import { useStateLogger } from '../hooks/useStateLogger'
 import { useViewportMode } from '../hooks/useViewportMode'
+import { useTableArea } from '../hooks/useTableArea'
+import { setPlayerOnline } from '../api/client'
 import { PixiPokerTable } from '../components/PixiTable/PixiPokerTable'
 import { ControlBar } from '../components/ControlBar/ControlBar'
 import { VotePopupLayer } from '../components/VotePopup/VotePopupLayer'
@@ -88,6 +90,9 @@ export function GameScreen() {
   // True while the canvas lags the live state (an all-in runout, or actions held until the cards land); the next hand waits.
   const [revealing, setRevealing] = useState(false)
   const viewport = useViewportMode()
+  const [stage, setStage] = useState<HTMLDivElement | null>(null)
+  const tableArea = useTableArea(stage)
+  const reactivating = useRef(false)
 
   if (!gameState || myPlayerId === null || !tableInfo) {
     return <Status>Connecting to table {tableId}… ({connectionState})</Status>
@@ -102,8 +107,23 @@ export function GameScreen() {
     transform: viewport.rotated ? `translateX(${viewport.height}px) rotate(90deg)` : 'none',
   }
 
+  // An idle player is back the moment they touch the screen — anywhere, not just on "I'm back" (which
+  // handles its own press, keyboard included). The press still does whatever it was aimed at.
+  const amIdle = gameState.players.find((p) => p.id === myPlayerId)?.status === 'IDLE'
+  function comeBack(e: PointerEvent) {
+    if (!amIdle || reactivating.current || (e.target as Element).closest('[data-testid="btn-im-back"]')) return
+    reactivating.current = true
+    setPlayerOnline(tableId).catch(() => {}).finally(() => { reactivating.current = false })
+  }
+
   return (
-    <Stage style={stageStyle} data-rotated={viewport.rotated} data-compact={viewport.compact}>
+    <Stage
+      ref={setStage}
+      style={stageStyle}
+      data-rotated={viewport.rotated}
+      data-compact={viewport.compact}
+      onPointerDownCapture={comeBack}
+    >
       <LeaveButton data-testid="btn-leave" aria-label="Leave table" title="Leave" onClick={() => navigate('/')}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden focusable="false">
           <path
@@ -115,7 +135,7 @@ export function GameScreen() {
           />
         </svg>
       </LeaveButton>
-      <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} />
+      <BlindsBanner small={gameState.blinds.small} big={gameState.blinds.big} area={tableArea} />
       <PixiPokerTable
         bus={bus}
         myPlayerId={myPlayerId}
@@ -131,7 +151,7 @@ export function GameScreen() {
         compact={viewport.compact}
       />
       <VotePopupLayer gameState={gameState} tableId={tableId} />
-      <Toasts toasts={toasts} onDismiss={dismissToast} />
+      <Toasts toasts={toasts} onDismiss={dismissToast} area={tableArea} />
       {gameState.gameStatus === 'PAUSED' && (
         <Banner variant="pause">Game paused — too many players went idle</Banner>
       )}

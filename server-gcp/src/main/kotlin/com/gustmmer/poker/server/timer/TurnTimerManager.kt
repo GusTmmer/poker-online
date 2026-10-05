@@ -4,6 +4,7 @@ import com.gustmmer.poker.GameStatus
 import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.majorityIdle
+import com.gustmmer.poker.turnTimeRemainingMs
 import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.service.ServiceResult
 import com.gustmmer.poker.server.service.loadTable
@@ -19,8 +20,10 @@ import java.time.Instant
  *
  * The countdown itself lives in a [TaskScheduler] (durable Cloud Tasks in production, an in-process timer for dev/tests) rather than in
  * this object's memory — so it survives restarts and scale-to-zero, and there is no per-instance timer
- * map to keep. The only durable timer state is the persisted `turnTimerStartedAt`, which doubles as the
- * idempotency token. Each auto-play/auto-pause is a commit, so clients are updated by the
+ * map to keep. The durable timer state is persisted on the table: `turnTimerStartedAt`, which doubles as the
+ * idempotency token, and the turn's deadline. A human's countdown starts only once their screen has caught
+ * up with the hand ([PresentationPacing]), so the clock never runs while the table still shows someone
+ * else's move. Each auto-play/auto-pause is a commit, so clients are updated by the
  * [com.gustmmer.poker.server.bus.TableUpdateBus] fan-out — this class never broadcasts directly.
  */
 class TurnTimerManager(
@@ -47,20 +50,25 @@ class TurnTimerManager(
             return
         }
 
-        // A computer player's "clock" is just its thinking time; the expiry plays its move.
+        // The persisted start time IS the turn token: every new turn re-arms with a fresh timestamp, so
+        // a late or duplicate delivery of a prior turn's task no longer matches and is ignored.
+        val startedAt = Instant.now().toEpochMilli()
+        val presentation = PresentationPacing.advance(
+            state.presentation, roundState.players.size, roundState.actions, roundState.pokerRoundStage, startedAt,
+        )
+
+        // A computer player's "clock" is just its thinking time; the expiry plays its move (the screens show
+        // it once they catch up). A human's clock waits for their screen to show it's their turn.
+        val headStartMs = if (currentPlayer.isBot) 0L else PresentationPacing.headStartMs(presentation, startedAt)
         val delayMs = if (currentPlayer.isBot) {
             val thinkMs = PokerTable(state, persistence).botDecisionForCurrentPlayer()?.thinkMs ?: 0L
             (thinkMs * botDelayScale).toLong()
         } else {
-            durationMs
+            headStartMs + durationMs
         }
 
-        // The persisted start time IS the turn token: every new turn re-arms with a fresh timestamp, so
-        // a late or duplicate delivery of a prior turn's task no longer matches and is ignored. Also
-        // the broadcast clock (`turnTimerEndsAt`).
-        val startedAt = Instant.now().toEpochMilli()
         val persisted = withTable(tableId, persistence) {
-            it.timerStarted(startedAt)
+            it.timerStarted(startedAt, startedAt + headStartMs, startedAt + delayMs, presentation)
             ServiceResult.Ok(Unit)
         }
         if (persisted is ServiceResult.Failed) {
@@ -98,15 +106,12 @@ class TurnTimerManager(
 
     /**
      * Stops the timer and returns the milliseconds left on the current turn (to resume after an
-     * unpause), derived from the persisted start time. Null when no round/timer is active.
+     * unpause), head start included. Null when no round/timer is active.
      */
     suspend fun pauseTimer(tableId: Int): Long? {
         scheduler.cancel(tableId)
         val state = loadTable(tableId, persistence) ?: return null
-        val startedAt = state.turnTimerStartedAt ?: return null
-        val durationMs = state.config.turnTimerSeconds * 1000L
-        val elapsed = Instant.now().toEpochMilli() - startedAt
-        return (durationMs - elapsed).coerceAtLeast(0)
+        return state.turnTimeRemainingMs(Instant.now().toEpochMilli())
     }
 
     /**

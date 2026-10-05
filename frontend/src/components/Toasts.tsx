@@ -2,17 +2,18 @@ import styled from '@emotion/styled'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { Toast } from '../hooks/useToasts'
 import { gradient, palette } from '../theme'
+import type { TableInsets } from '../hooks/useTableArea'
 
+/** Spans the table's area (beside the control bar) and stacks toasts centred just above its bottom edge. */
 const Stack = styled.div`
   position: fixed;
-  bottom: 5.5rem;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   z-index: 80;
   align-items: center;
+  pointer-events: none;
 `
 
 const Bubble = styled(motion.div)`
@@ -25,16 +26,18 @@ const Bubble = styled(motion.div)`
   font-size: 0.95rem;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
   cursor: pointer;
+  pointer-events: auto;
 `
 
 interface ToastsProps {
   toasts: Toast[]
   onDismiss: (id: number) => void
+  area: TableInsets
 }
 
-export function Toasts({ toasts, onDismiss }: ToastsProps) {
+export function Toasts({ toasts, onDismiss, area }: ToastsProps) {
   return (
-    <Stack>
+    <Stack style={{ right: area.right, bottom: `calc(${area.bottom}px + 0.7rem)` }}>
       <AnimatePresence>
         {toasts.map((toast) => (
           <Bubble

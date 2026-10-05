@@ -13,6 +13,14 @@ private val log = LoggerFactory.getLogger(PokerTableState::class.java)
 @Serializable
 enum class GameStatus { WAITING, RUNNING, PAUSED }
 
+/**
+ * How far the players' screens have been told to animate this hand: [actionsSeen] entries of the hand's
+ * action log have been accounted for, and the table is busy playing them until [busyUntil] (epoch ms).
+ * Lets a turn's clock wait until the table actually shows it's that player's turn. Null at a hand's start.
+ */
+@Serializable
+data class PresentationCursor(val actionsSeen: Int, val busyUntil: Long)
+
 @Serializable
 data class WireablePokerTableState(
     val id: Int,
@@ -25,12 +33,24 @@ data class WireablePokerTableState(
     val readyPlayers: List<Int> = emptyList(),
     val turnTimeRemainingMs: Long? = null,
     val turnTimerStartedAt: Long? = null,
+    val turnClockStartsAt: Long? = null,
+    val turnTimerEndsAt: Long? = null,
+    val presentation: PresentationCursor? = null,
     val version: Long = 0,
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
     val activeVotes: List<ActiveVote> = emptyList(),
     val pendingRemovals: List<Int> = emptyList(),
 )
+
+/**
+ * Time left on the current turn at [now], head start included; null when no turn clock is running. States
+ * written before the deadline was persisted fall back to the configured turn length from its start.
+ */
+fun PokerTableState.turnTimeRemainingMs(now: Long): Long? {
+    val endsAt = turnTimerEndsAt ?: turnTimerStartedAt?.let { it + config.turnTimerSeconds * 1000L } ?: return null
+    return (endsAt - now).coerceAtLeast(0)
+}
 
 fun PokerTableState.isGameOver(): Boolean = players.participating().size <= 1
 
@@ -51,7 +71,16 @@ data class PokerTableState(
     val gameStatus: GameStatus = GameStatus.WAITING,
     val readyPlayers: Set<Int> = emptySet(),
     val turnTimeRemainingMs: Long? = null,
+    /** When the current turn began; also its timer's idempotency token. */
     val turnTimerStartedAt: Long? = null,
+    /**
+     * When the current turn's countdown starts: [turnTimerStartedAt] plus a head start while the players'
+     * screens finish animating what led to the turn (see [presentation]).
+     */
+    val turnClockStartsAt: Long? = null,
+    /** When the current turn times out (epoch ms). */
+    val turnTimerEndsAt: Long? = null,
+    val presentation: PresentationCursor? = null,
     val version: Long = 0,
     val roundsSinceLastEscalation: Int = 0,
     val initialPlayerCount: Int = 0,
@@ -98,6 +127,9 @@ data class PokerTableState(
                 readyPlayers = state.readyPlayers.toSet(),
                 turnTimeRemainingMs = state.turnTimeRemainingMs,
                 turnTimerStartedAt = state.turnTimerStartedAt,
+                turnClockStartsAt = state.turnClockStartsAt,
+                turnTimerEndsAt = state.turnTimerEndsAt,
+                presentation = state.presentation,
                 version = state.version,
                 roundsSinceLastEscalation = state.roundsSinceLastEscalation,
                 initialPlayerCount = state.initialPlayerCount,
@@ -118,6 +150,9 @@ data class PokerTableState(
         readyPlayers = readyPlayers.toList(),
         turnTimeRemainingMs = turnTimeRemainingMs,
         turnTimerStartedAt = turnTimerStartedAt,
+        turnClockStartsAt = turnClockStartsAt,
+        turnTimerEndsAt = turnTimerEndsAt,
+        presentation = presentation,
         version = version,
         roundsSinceLastEscalation = roundsSinceLastEscalation,
         initialPlayerCount = initialPlayerCount,

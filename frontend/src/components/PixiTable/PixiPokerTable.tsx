@@ -26,6 +26,7 @@ import { spawnActionBurst } from './burst'
 import { tween, cancelTweens } from './tween'
 import { getSlotMap, pilePos, refreshSeats, seatPos } from './seats'
 import { tick } from './tick'
+import { tableInsets } from '../../hooks/useTableArea'
 
 // Module map: scene types → ./sceneTypes · constants → ./constants · pot pyramid →
 // ./pot · chip sprites → ./chips · tween engine → ./tween · seat rendering →
@@ -241,9 +242,10 @@ function doResize(
   const stageW = container.clientWidth || window.innerWidth
   const stageH = container.clientHeight || window.innerHeight
   const bar = container.parentElement?.querySelector<HTMLElement>('[data-testid="control-bar"]')
-  const sideBar = bar != null && bar.offsetHeight >= stageH * 0.9
-  const pw = sideBar ? stageW - bar.offsetWidth : stageW
-  const ph = sideBar ? stageH : stageH - (bar?.offsetHeight ?? DEFAULT_BAR_HEIGHT)
+  const insets = tableInsets(stageH, bar, DEFAULT_BAR_HEIGHT)
+  const sideBar = insets.right > 0
+  const pw = stageW - insets.right
+  const ph = stageH - insets.bottom
 
   const compact = phone || sideBar || ph < LH * 0.8
   const scale = phone
@@ -299,9 +301,8 @@ function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HT
   ;(window as { __pokerLayout?: () => unknown }).__pokerLayout = () => {
     const stageW = container.clientWidth
     const stageH = container.clientHeight
-    const bar = container.parentElement?.querySelector<HTMLElement>('[data-testid="control-bar"]')
-    const sideBar = bar != null && bar.offsetHeight >= stageH * 0.9
-    const free = { w: sideBar ? stageW - bar.offsetWidth : stageW, h: sideBar ? stageH : stageH - (bar?.offsetHeight ?? 0) }
+    const insets = tableInsets(stageH, container.parentElement?.querySelector<HTMLElement>('[data-testid="control-bar"]'))
+    const free = { w: stageW - insets.right, h: stageH - insets.bottom }
     const left = parseFloat(canvas.style.left), top = parseFloat(canvas.style.top)
     const k = parseFloat(canvas.style.width) / LW
     const seats = [...scene.seats.entries()].map(([playerId, { seatObj: s }]) => {

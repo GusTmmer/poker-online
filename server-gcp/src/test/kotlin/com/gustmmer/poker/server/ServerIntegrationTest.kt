@@ -515,6 +515,46 @@ class ServerIntegrationTest {
     }
 
     @Test
+    fun `a turn's clock waits for the deal to play out before counting down`() = testApplication {
+        val alice = configureTestApp()
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","startingChips":1000,"turnTimerSeconds":1,"maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies); install(WebSockets) }
+        bob.post("/api/tables/$tableId/players") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"playerName":"Bob"}""")
+        }
+
+        bob.webSocket("/ws/tables/$tableId") {
+            incoming.receive() // the snapshot on connect
+            val dealtAt = System.currentTimeMillis()
+            assertEquals(HttpStatusCode.OK, alice.post("/api/tables/$tableId/start-round").status)
+
+            val clock = withTimeout(5000) {
+                while (true) {
+                    val json = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
+                    val endsAt = json["turnTimerEndsAt"]?.jsonPrimitive?.longOrNull ?: continue
+                    return@withTimeout json["turnClockStartsAt"]!!.jsonPrimitive.long to endsAt
+                }
+                @Suppress("UNREACHABLE_CODE") error("unreachable")
+            }
+            val (startsAt, endsAt) = clock
+            // Heads-up the deal takes ~2.6s to play on screen; the 1s turn only counts down after it.
+            assertEquals(1000L, endsAt - startsAt)
+            assertTrue(startsAt - dealtAt in 2000L..3500L, "head start was ${startsAt - dealtAt}ms")
+        }
+
+        // Without the head start the 1s clock would already have idled the player to act.
+        delay(1500)
+        val players = Json.parseToJsonElement(alice.get("/api/tables/$tableId").bodyAsText()).jsonObject["players"]!!.jsonArray
+        assertTrue(players.none { it.jsonObject["status"]!!.jsonPrimitive.content == "IDLE" })
+    }
+
+    @Test
     fun `a pending vote fans out to other players via the bus`() = testApplication {
         val alice = configureTestApp()
         val tableId = Json.parseToJsonElement(

@@ -426,7 +426,130 @@ test.describe('mobile', () => {
       await host.dispose()
     }
   })
+
+  test('the blinds announcement is centred on the table, not the whole screen', async ({ page }) => {
+    const host = await BotClient.create()
+    try {
+      // Blinds go up after every orbit — two hands heads-up. Fold them out until the announcement shows.
+      const tableId = await host.createTable('Host', { blindEscalationOrbits: 1 })
+      const me = await joinAsHuman(page, tableId)
+      const hero = page.getByTestId('blinds-hero')
+      for (let i = 0; i < 60 && !(await hero.isVisible()); i++) {
+        const s = await host.getState(tableId)
+        if (s.gameStatus === 'WAITING') await host.startRound(tableId)
+        else if (s.nextPlayerIdToAct === host.playerId) await host.act(tableId, 'FOLD')
+        else if (s.nextPlayerIdToAct === me && await page.getByTestId('btn-fold').isEnabled()) await page.getByTestId('btn-fold').tap()
+        await page.waitForTimeout(200)
+      }
+      await expect(hero).toBeVisible()
+
+      // In stage coordinates (pre-rotation), the hero's centre sits in the middle of the area left of the
+      // control-bar column, where the table is.
+      const { hero: centre, free } = await page.evaluate(() => {
+        const el = document.querySelector<HTMLElement>('[data-testid="blinds-hero"] > :last-child')!
+        const layout = (window as { __pokerLayout?: () => { free: { w: number; h: number } } }).__pokerLayout!()
+        let x = 0, y = 0
+        for (let n: HTMLElement | null = el; n && !n.dataset.rotated; n = n.offsetParent as HTMLElement | null) {
+          x += n.offsetLeft; y += n.offsetTop
+        }
+        return { hero: { cx: x + el.offsetWidth / 2, cy: y + el.offsetHeight / 2 }, free: layout.free }
+      })
+      expect(Math.abs(centre.cx - free.w / 2)).toBeLessThan(4)
+      expect(Math.abs(centre.cy - free.h / 2)).toBeLessThan(4)
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  test('an idle player is brought back by touching anywhere on the screen', async ({ page }) => {
+    const others = await Promise.all([BotClient.create(), BotClient.create()])
+    try {
+      // Three humans, so one going idle doesn't auto-pause the table; a short clock idles us quickly.
+      const tableId = await others[0].createTable('Host', { turnTimerSeconds: 2 })
+      await others[1].join(tableId, 'Guest')
+      const me = await joinAsHuman(page, tableId)
+      await others[0].startRound(tableId)
+      for (let i = 0; i < 40; i++) {
+        const s = await others[0].getState(tableId)
+        if (s.players.find((p: { id: number; status: string }) => p.id === me)?.status === 'IDLE') break
+        const toAct = s.nextPlayerIdToAct
+        if (toAct != null && toAct !== me) await others.find((o) => o.playerId === toAct)!.act(tableId, 'CALL')
+        await page.waitForTimeout(250)
+      }
+      await expect(page.getByRole('button', { name: "I'm back" })).toBeVisible({ timeout: 10_000 })
+
+      // Tap the felt, nowhere near the button.
+      const vp = page.viewportSize()!
+      await page.touchscreen.tap(vp.width / 2, vp.height / 3)
+      await expect(page.getByRole('button', { name: "I'm back" })).toBeHidden({ timeout: 5_000 })
+    } finally {
+      await Promise.all(others.map((o) => o.dispose()))
+    }
+  })
 })
+
+for (const [hold, viewport, rotated] of [
+  ['portrait', { width: 390, height: 844 }, true],
+  ['landscape', { width: 844, height: 390 }, false],
+] as const) {
+  test.describe(`mobile controls (${hold})`, () => {
+    test.use({ viewport, hasTouch: true, isMobile: true })
+
+    test('the table menu opens on screen', async ({ page }) => {
+      const host = await BotClient.create()
+      try {
+        await joinAsHuman(page, await host.createTable('Host'))
+        await page.getByRole('button', { name: 'Table menu' }).tap()
+        await expect(page.locator('[data-testid="menu-copy-invite"]')).toBeInViewport({ ratio: 1 })
+      } finally {
+        await host.dispose()
+      }
+    })
+
+    test('a sideways touch drag moves the raise slider', async ({ page }) => {
+      const host = await BotClient.create()
+      try {
+        const tableId = await host.createTable('Host')
+        const me = await joinAsHuman(page, tableId)
+        await host.startRound(tableId)
+        await expect.poll(async () => {
+          const s = await host.getState(tableId)
+          if (s.nextPlayerIdToAct === host.playerId) await host.act(tableId, 'CALL')
+          return s.nextPlayerIdToAct
+        }, { timeout: 10_000 }).toBe(me)
+        await expect(page.locator('[data-testid="btn-call"]')).toBeEnabled({ timeout: 10_000 })
+
+        // Start on the thumb (value 0 sits at the slider's start) and drag straight along the slider. On the
+        // rotated stage (turned 90° clockwise) that axis runs down the physical screen.
+        const box = (await page.locator('input[type="range"]').boundingBox())!
+        const along = (f: number) =>
+          rotated
+            ? { x: box.x + box.width / 2, y: box.y + 6 + box.height * f }
+            : { x: box.x + 6 + box.width * f, y: box.y + box.height / 2 }
+        const cdp = await page.context().newCDPSession(page)
+        const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', f?: number) =>
+          cdp.send('Input.dispatchTouchEvent', { type, touchPoints: f == null ? [] : [along(f)] })
+        await touch('touchStart', 0)
+        for (let i = 1; i <= 10; i++) await touch('touchMove', (0.6 * i) / 10)
+        await touch('touchEnd')
+
+        await expect(page.locator('[data-testid="btn-call"]')).toHaveText(/Raise|All In/)
+      } finally {
+        await host.dispose()
+      }
+    })
+  })
+}
+
+/** Joins [tableId] as "Human" through the UI and returns the local player's id. */
+async function joinAsHuman(page: import('@playwright/test').Page, tableId: number): Promise<number> {
+  await openTable(page, tableId)
+  await page.fill('input[placeholder="Your name"]', 'Human')
+  await page.click('button[type="submit"]')
+  await expect(page.locator('[data-testid="control-bar"]')).toBeVisible({ timeout: 10_000 })
+  await expect.poll(async () => (await gs(page))?.players.find((p) => p.name === 'Human')?.id, { timeout: 10_000 }).toBeDefined()
+  return (await gs(page))!.players.find((p) => p.name === 'Human')!.id
+}
 
 // ── phone layout ──────────────────────────────────────────────────────────────
 

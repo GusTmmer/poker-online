@@ -49,9 +49,12 @@ const ErrorBadge = styled.span`
   pointer-events: none;
 `
 
-const ErrorBubble = styled.div`
+/** Popups open above the button, or below it when the button sits at the top of the screen. */
+const anchored = (p: { down: boolean }) => (p.down ? 'top: 3rem;' : 'bottom: 3rem;')
+
+const ErrorBubble = styled('div', { shouldForwardProp: (p) => p !== 'down' })<{ down: boolean }>`
   position: absolute;
-  bottom: 3rem;
+  ${anchored}
   right: 0;
   width: max-content;
   max-width: 16rem;
@@ -80,10 +83,12 @@ const Hint = styled.div`
   font-size: 0.85rem;
 `
 
-const Dropdown = styled.div`
+const Dropdown = styled('div', { shouldForwardProp: (p) => p !== 'down' })<{ down: boolean }>`
   position: absolute;
-  bottom: 3rem;
+  ${anchored}
   right: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
   background: ${gradient.panel};
   border: 1px solid ${palette.bronze};
   border-radius: 8px;
@@ -138,15 +143,21 @@ const RenameInput = styled.input`
   }
 `
 
+/** Gap a downward menu keeps from the screen's bottom edge, and the least it shrinks to before that. */
+const EDGE_MARGIN_PX = 8
+const MIN_DROPDOWN_PX = 120
+
 type MenuView = null | 'main' | 'kick' | 'rename' | 'invite'
 
 interface VotingMenuProps {
   gameState: GameStateUpdate
   myPlayerId: number
   tableId: number
+  /** The button sits at the top of the screen (the phone side column): open the menu downwards. */
+  openDown?: boolean
 }
 
-export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) {
+export function VotingMenu({ gameState, myPlayerId, tableId, openDown = false }: VotingMenuProps) {
   const [menuView, setMenuView] = useState<MenuView>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [savingName, setSavingName] = useState(false)
@@ -170,6 +181,20 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
       // No clipboard access (e.g. plain http on a LAN address): show the link to copy by hand.
       setMenuView('invite')
     }
+  }
+
+  /** Opening downwards on a short screen, the menu scrolls rather than running off the bottom edge. */
+  function fitBelow(el: HTMLDivElement | null) {
+    if (!el || !openDown) return
+    // Measured in layout px against the game stage, so it holds on the rotated stage too.
+    const stage = el.closest<HTMLElement>('[data-rotated]')
+    const stageTop = stage?.getBoundingClientRect() ?? { top: 0, left: 0 }
+    const box = el.getBoundingClientRect()
+    const rotated = stage?.dataset.rotated === 'true'
+    // On the stage turned 90° clockwise, the stage's top edge is the screen's right edge.
+    const top = rotated ? stageTop.left + (stage?.clientHeight ?? 0) - box.right : box.top - stageTop.top
+    const stageHeight = stage?.clientHeight ?? window.innerHeight
+    el.style.maxHeight = `${Math.max(MIN_DROPDOWN_PX, stageHeight - top - EDGE_MARGIN_PX)}px`
   }
 
   function openRename() {
@@ -219,12 +244,12 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
         ⋮
       </MenuButton>
       {failed && <ErrorBadge>failed</ErrorBadge>}
-      {failed && errorMessage && !menuView && <ErrorBubble role="alert">{errorMessage}</ErrorBubble>}
+      {failed && errorMessage && !menuView && <ErrorBubble down={openDown} role="alert">{errorMessage}</ErrorBubble>}
       {linkCopied && !failed && !menuView && (
-        <NoticeBubble role="status">Invite link copied — send it to a friend</NoticeBubble>
+        <NoticeBubble down={openDown} role="status">Invite link copied — send it to a friend</NoticeBubble>
       )}
       {menuView === 'main' && (
-        <Dropdown>
+        <Dropdown down={openDown} ref={fitBelow}>
           <Item data-testid="menu-copy-invite" onClick={() => void copyInvite()}>
             Copy invite link
           </Item>
@@ -246,7 +271,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
         </Dropdown>
       )}
       {menuView === 'rename' && (
-        <Dropdown>
+        <Dropdown down={openDown} ref={fitBelow}>
           <RenameInput
             autoFocus
             value={nameDraft}
@@ -265,7 +290,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
         </Dropdown>
       )}
       {menuView === 'invite' && (
-        <Dropdown>
+        <Dropdown down={openDown} ref={fitBelow}>
           <Hint>Copy this link and send it to the players you want to invite:</Hint>
           <RenameInput
             data-testid="invite-link"
@@ -279,7 +304,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId }: VotingMenuProps) 
         </Dropdown>
       )}
       {menuView === 'kick' && (
-        <Dropdown>
+        <Dropdown down={openDown} ref={fitBelow}>
           {others.length === 0 && <Empty>No other players</Empty>}
           {others.map((p) => (
             <Item key={p.id} onClick={() => fire(() => requestKick(tableId, { targetPlayerId: p.id }))}>

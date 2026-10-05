@@ -40,6 +40,11 @@ data class GameStateUpdate(
     val message: String? = null,
     /** Epoch-millisecond timestamp when the current player's turn timer expires. Null when no timer is running. */
     val turnTimerEndsAt: Long? = null,
+    /**
+     * When the countdown to [turnTimerEndsAt] starts: until then the table is still animating what led to the
+     * turn, and the clock shows the full turn. Null when no timer is running.
+     */
+    val turnClockStartsAt: Long? = null,
     /** The recipient's own betting limits while a betting round is live and they are in the hand; else null. */
     val myBettingOptions: BettingOptionsView? = null,
     /**
@@ -242,7 +247,8 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
         val botToAct = roundState?.takeIf { it.pokerRoundStage.isBettingRound() }?.playerOrdering?.bettingPlayer()?.isBot == true
         val turnTimerEndsAt = state.turnTimerStartedAt
             ?.takeUnless { botToAct }
-            ?.let { it + state.config.turnTimerSeconds * 1000L }
+            ?.let { state.turnTimerEndsAt ?: (it + state.config.turnTimerSeconds * 1000L) }
+        val turnClockStartsAt = turnTimerEndsAt?.let { state.turnClockStartsAt ?: state.turnTimerStartedAt }
 
         val bettingState = roundState?.bettingRoundState
         val me = roundState?.players?.find { it.id == forPlayerId }
@@ -266,6 +272,7 @@ class TableConnectionManager(private val bus: TableUpdateBus) {
             readyPlayerIds = state.readyPlayers.toList(),
             activeVotes = activeVotes,
             turnTimerEndsAt = turnTimerEndsAt,
+            turnClockStartsAt = turnClockStartsAt,
             myBettingOptions = myBettingOptions,
             runoutOdds = runoutOdds,
             pots = pots,

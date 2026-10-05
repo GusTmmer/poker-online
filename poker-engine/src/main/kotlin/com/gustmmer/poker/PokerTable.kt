@@ -116,6 +116,10 @@ class PokerTable(
             gameStatus = GameStatus.RUNNING,
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
+            turnClockStartsAt = null,
+            turnTimerEndsAt = null,
+            // A fresh hand: its deal is the first thing the players' screens animate.
+            presentation = null,
             initialPlayerCount = if (state.initialPlayerCount == 0) roundPlayers.size else state.initialPlayerCount,
         )
         dirty = true
@@ -298,6 +302,8 @@ class PokerTable(
             gameStatus = GameStatus.WAITING,
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
+            turnClockStartsAt = null,
+            turnTimerEndsAt = null,
             turnTimeRemainingMs = null,
             roundState = null,
             activeVotes = emptyList(),
@@ -307,8 +313,18 @@ class PokerTable(
         dirty = true
     }
 
-    fun timerStarted(epochMillis: Long) {
-        state = state.copy(turnTimerStartedAt = epochMillis)
+    /**
+     * Arms the current turn's clock: it began at [startedAt] (the timer's token), counts down from
+     * [clockStartsAt] and times out at [endsAt]. [presentation] records what the players' screens have
+     * been told to animate so far.
+     */
+    fun timerStarted(startedAt: Long, clockStartsAt: Long, endsAt: Long, presentation: PresentationCursor) {
+        state = state.copy(
+            turnTimerStartedAt = startedAt,
+            turnClockStartsAt = clockStartsAt,
+            turnTimerEndsAt = endsAt,
+            presentation = presentation,
+        )
         dirty = true
     }
 
@@ -317,6 +333,8 @@ class PokerTable(
             gameStatus = GameStatus.PAUSED,
             turnTimeRemainingMs = remainingTimerMs,
             turnTimerStartedAt = null,
+            turnClockStartsAt = null,
+            turnTimerEndsAt = null,
         )
         dirty = true
     }
@@ -356,6 +374,8 @@ class PokerTable(
             gameStatus = GameStatus.WAITING,
             readyPlayers = emptySet(),
             turnTimerStartedAt = null,
+            turnClockStartsAt = null,
+            turnTimerEndsAt = null,
             pendingRemovals = emptySet(),
         )
         dirty = true

@@ -45,14 +45,16 @@ export function TurnTimer({ gameState, myPlayerId }: Props) {
   useEffect(() => {
     const endsAt = gameState.turnTimerEndsAt
     if (!endsAt) { setSecondsLeft(null); return }
+    // The clock holds at the full turn while the table catches up, then counts down.
+    const startsAt = gameState.turnClockStartsAt ?? 0
 
     function tick() {
-      setSecondsLeft(Math.max(0, Math.ceil((endsAt! - Date.now()) / 1000)))
+      setSecondsLeft(Math.max(0, Math.ceil((endsAt! - Math.max(Date.now(), startsAt)) / 1000)))
     }
     tick()
     const id = setInterval(tick, 500)
     return () => clearInterval(id)
-  }, [gameState.turnTimerEndsAt])
+  }, [gameState.turnTimerEndsAt, gameState.turnClockStartsAt])
 
   if (secondsLeft === null || gameState.nextPlayerIdToAct == null) return null
 

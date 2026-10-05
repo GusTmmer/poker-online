@@ -2,13 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import styled from '@emotion/styled'
 import { AnimatePresence, motion } from 'framer-motion'
 import { gradient, palette } from '../theme'
+import type { TableInsets } from '../hooks/useTableArea'
 
 // Centering lives on a static flex wrapper, so framer-motion's transforms on the
 // hero never fight a CSS translate. The whole layer ignores the pointer: the hand
-// keeps playing underneath.
+// keeps playing underneath. It covers the table's area (beside the control bar), so
+// the hero lands on the table's centre.
 const Layer = styled.div`
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
   z-index: 250;
   display: flex;
   align-items: center;
@@ -79,7 +82,7 @@ interface Announcement {
  * auto-escalation orbit or a passed INCREASE_BLINDS vote). A decrease — e.g. a new
  * game resetting to the base blinds — never triggers it.
  */
-export function BlindsBanner({ small, big }: { small: number; big: number }) {
+export function BlindsBanner({ small, big, area }: { small: number; big: number; area: TableInsets }) {
   const prev = useRef<{ small: number; big: number } | null>(null)
   const [announced, setAnnounced] = useState<Announcement | null>(null)
 
@@ -96,7 +99,12 @@ export function BlindsBanner({ small, big }: { small: number; big: number }) {
   return (
     <AnimatePresence>
       {announced && (
-        <Layer key={`${announced.small}-${announced.big}`} data-testid="blinds-hero" role="status">
+        <Layer
+          key={`${announced.small}-${announced.big}`}
+          data-testid="blinds-hero"
+          role="status"
+          style={{ right: area.right, bottom: area.bottom }}
+        >
           <Halo initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} />
           <Hero
             initial={{ scale: 0.6, opacity: 0 }}
