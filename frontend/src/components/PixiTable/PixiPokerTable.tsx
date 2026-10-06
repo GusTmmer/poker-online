@@ -295,7 +295,8 @@ function rebuildForLayout(scene: SceneState) {
 /**
  * Dev-only test seam: reports, in game-stage CSS px (before any rotation), the free area beside the
  * control bar and the box around each seat's avatar, labels and showdown row — so e2e tests can
- * check that nothing is drawn off screen.
+ * check that nothing is drawn off screen. Also how many board cards the table shows and whether it has
+ * [settled] — nothing held, dealing or moving — so screenshots wait for the table, not a guessed delay.
  */
 function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HTMLCanvasElement) {
   ;(window as { __pokerLayout?: () => unknown }).__pokerLayout = () => {
@@ -322,8 +323,16 @@ function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HT
       left: left + cards.x * k, top: top + cards.y * k,
       right: left + (cards.x + cards.width) * k, bottom: top + (cards.y + cards.height) * k,
     }
-    return { free, compact: scene.compact, seats, myCards }
+    return { free, compact: scene.compact, seats, myCards, community: scene.shownCommunity.length, settled: settled(scene) }
   }
+}
+
+/** Nothing is waiting to play or still moving on the table. */
+function settled(scene: SceneState): boolean {
+  return scene.held.length === 0 && performance.now() >= scene.holdUntil && scene.runout == null &&
+    !scene.isDealing && !scene.isCommunityDealing && scene.commDeck == null &&
+    scene.dealCards.length === 0 && scene.tweens.length === 0 && scene.bursts.length === 0 &&
+    scene.flyingChips.length === 0 && scene.winnerChips.length === 0 && scene.floatingDeltas.length === 0
 }
 
 // ─── community cards ──────────────────────────────────────────────────────────

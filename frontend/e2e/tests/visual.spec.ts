@@ -16,6 +16,14 @@ async function gs(page: import('@playwright/test').Page): Promise<GameState | nu
 }
 
 /** Inject WS spy and navigate. */
+/** The canvas shows [community] board cards and nothing on it is still moving (dev-build probe). */
+async function tableAtRest(page: import('@playwright/test').Page, community: number): Promise<boolean> {
+  return page.evaluate((n) => {
+    const probe = (window as { __pokerLayout?: () => { community: number; settled: boolean } }).__pokerLayout?.()
+    return probe != null && probe.community === n && probe.settled
+  }, community)
+}
+
 async function openTable(page: import('@playwright/test').Page, tableId: number) {
   await page.addInitScript(() => {
     const OrigWS = window.WebSocket
@@ -186,6 +194,9 @@ test.describe('visual: in-round', () => {
       await expect
         .poll(() => gs(page).then((s) => s?.roundStage), { timeout: 10_000 })
         .toBe('BET_FLOP')
+      // The table plays the calls and then deals the flop well after the server moved on: wait for the
+      // canvas itself to show three cards and come to rest.
+      await expect.poll(() => tableAtRest(page, 3), { timeout: 15_000 }).toBe(true)
       await page.waitForTimeout(CANVAS_SETTLE_MS)
 
       await expect(page).toHaveScreenshot('flop.png', SNAP_OPTS)

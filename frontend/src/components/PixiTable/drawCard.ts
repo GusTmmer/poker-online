@@ -157,10 +157,11 @@ export function makeCardBack(): Container {
 
 /**
  * Simplified card back for far-away renders (seat pocket cards, deal flights),
- * which display at ~0.3× scale where the full back's lattice and medallion
- * dissolve into noise. Same CARD_W × CARD_H footprint so pair/pivot math is
- * interchangeable with makeCardBack; only chunky vector features that stay
- * crisp when scaled down: bold gold frame, oxblood stock, gold diamond inlay.
+ * which display at ~0.3× scale where the full back's lattice and thin lines
+ * dissolve into noise. The same design as [makeCardBack] — oxblood stock, gold
+ * frame, spade medallion — reduced to chunky vector features that stay crisp
+ * when scaled down: a bold frame, a thick ring and a drawn (not typeset) spade.
+ * Same CARD_W × CARD_H footprint so pair/pivot math is interchangeable.
  */
 export function makeMiniCardBack(): Container {
   const c = new Container()
@@ -181,13 +182,31 @@ export function makeMiniCardBack(): Container {
   // Bold gold frame — ~1.5 px after the 0.3× scale
   g.roundRect(2.5, 2.5, CARD_W - 5, CARD_H - 5, CARD_R - 1).stroke({ color: hex.gold, width: 5 })
 
-  // Center diamond inlay
-  const cx = CARD_W / 2, cy = CARD_H / 2, dw = 13, dh = 18
-  g.moveTo(cx, cy - dh).lineTo(cx + dw, cy).lineTo(cx, cy + dh).lineTo(cx - dw, cy).closePath()
-    .fill({ color: hex.gold })
+  // Spade medallion — the full back's, bolder
+  const cx = CARD_W / 2, cy = CARD_H / 2
+  g.circle(cx, cy, 17).fill({ color: hex.oxbloodDeep }).stroke({ color: hex.gold, width: 3.5 })
+  drawSpade(g, cx, cy + 0.5, 20, 22)
+  g.fill({ color: hex.gold })
 
   c.addChild(g)
   return c
+}
+
+/** Traces a spade [w] × [h] centred on ([cx], [cy]) into [g]'s current path; the caller fills it. */
+function drawSpade(g: Graphics, cx: number, cy: number, w: number, h: number) {
+  const top = cy - h / 2, bottom = cy + h / 2, half = w / 2
+  // Right lobe: from the tip, out and round to where it meets the stem.
+  g.moveTo(cx, top)
+    .bezierCurveTo(cx + half * 0.25, top + h * 0.22, cx + half, top + h * 0.34, cx + half, top + h * 0.6)
+    .bezierCurveTo(cx + half, top + h * 0.82, cx + half * 0.35, top + h * 0.86, cx + half * 0.1, top + h * 0.7)
+    // Flared stem
+    .lineTo(cx + half * 0.38, bottom)
+    .lineTo(cx - half * 0.38, bottom)
+    .lineTo(cx - half * 0.1, top + h * 0.7)
+    // Left lobe, mirrored back up to the tip
+    .bezierCurveTo(cx - half * 0.35, top + h * 0.86, cx - half, top + h * 0.82, cx - half, top + h * 0.6)
+    .bezierCurveTo(cx - half, top + h * 0.34, cx - half * 0.25, top + h * 0.22, cx, top)
+    .closePath()
 }
 
 /** A pair of simplified mini card backs side by side, sized PAIR_W × CARD_H. */
