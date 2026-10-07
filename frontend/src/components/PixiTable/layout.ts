@@ -8,6 +8,15 @@ export const LH = 560
 // which extends below their seat — clears the fixed ControlBar at the bottom.
 export const SCENE_Y_OFFSET = 40
 
+// On short screens the logical canvas' empty margins are cropped: fit this much of the
+// scene (seats, labels and showdown rows) rather than the full 800×560.
+export const COMPACT_CONTENT_W = 740
+export const COMPACT_CONTENT_H = 500
+// The phone layout keeps every seat — labels and showdown row included — within this box around the
+// table's centre (see the compact branches in drawSeat), so it can be cropped tighter and drawn larger.
+export const PHONE_CONTENT_W = 720
+export const PHONE_CONTENT_H = 480
+
 // Felt dimensions in logical units
 export const FELT_W = 480
 export const FELT_H = 230

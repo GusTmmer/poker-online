@@ -559,8 +559,10 @@ type Box = { left: number; top: number; right: number; bottom: number }
 type LayoutProbe = {
   free: { w: number; h: number }
   compact: boolean
-  seats: (Box & { playerId: number; hasShowdownRow: boolean })[]
+  seats: (Box & { playerId: number; hasShowdownRow: boolean; labels: Box; row: Box | null })[]
   myCards: Box | null
+  board: Box | null
+  pot: Box | null
 }
 
 async function probe(page: import('@playwright/test').Page): Promise<LayoutProbe | null> {
@@ -572,19 +574,39 @@ function offScreen(box: Box, free: LayoutProbe['free']): boolean {
   return box.left < -slack || box.top < -slack || box.right > free.w + slack || box.bottom > free.h + slack
 }
 
+/** Where showdown rows run into another seat's labels or row, the board or the pot. */
+function overlaps({ seats, board, pot }: LayoutProbe): string[] {
+  const slack = 1
+  const hit = (a: Box, b: Box) =>
+    a.left < b.right - slack && b.left < a.right - slack && a.top < b.bottom - slack && b.top < a.bottom - slack
+  const found: string[] = []
+  for (const s of seats) {
+    if (!s.row) continue
+    if (board && hit(s.row, board)) found.push(`row ${s.playerId} × board`)
+    if (pot && hit(s.row, pot)) found.push(`row ${s.playerId} × pot`)
+    for (const t of seats) {
+      if (t === s) continue
+      if (hit(s.row, t.labels)) found.push(`row ${s.playerId} × seat ${t.playerId}`)
+      if (t.row && s.playerId < t.playerId && hit(s.row, t.row)) found.push(`row ${s.playerId} × row ${t.playerId}`)
+    }
+  }
+  return found
+}
+
 /**
- * Six players see a hand through to showdown — the fullest a phone screen gets — while the test checks
- * the local player's cards on their turn and then every seat, showdown row included, at the end.
+ * [players] see a hand through to showdown while the test checks the local player's cards on their turn
+ * and then every seat at the end: on screen, showdown row included, and no row running into another
+ * seat, another row, the board or the pot — most rows are 7 cards wide.
  */
-async function sixWayShowdownFitsTheScreen(page: import('@playwright/test').Page) {
-  const others = await Promise.all(Array.from({ length: 5 }, () => BotClient.create()))
+async function showdownFitsTheScreen(page: import('@playwright/test').Page, players: number, compact: boolean) {
+  const others = await Promise.all(Array.from({ length: players - 1 }, () => BotClient.create()))
   try {
-    const tableId = await others[0].createTable('P1', { turnTimerSeconds: 120 })
+    const tableId = await others[0].createTable('P1', { turnTimerSeconds: 120, maxPlayers: players })
     for (let i = 1; i < others.length; i++) await others[i].join(tableId, `P${i + 1}`)
     await openTable(page, tableId)
     await page.fill('input[placeholder="Your name"]', 'Hero')
     await page.click('button[type="submit"]')
-    await expect.poll(async () => (await gs(page))?.players.length, { timeout: 10_000 }).toBe(6)
+    await expect.poll(async () => (await gs(page))?.players.length, { timeout: 10_000 }).toBe(players)
     const me = (await gs(page))!.players.find((p) => p.name === 'Hero')!.id
 
     await others[0].startRound(tableId)
@@ -611,12 +633,13 @@ async function sixWayShowdownFitsTheScreen(page: import('@playwright/test').Page
     }
     expect(checkedMyCards).toBe(true)
 
-    await expect.poll(async () => (await probe(page))?.seats.filter((s) => s.hasShowdownRow).length, { timeout: 15_000 }).toBe(6)
+    await expect.poll(async () => (await probe(page))?.seats.filter((s) => s.hasShowdownRow).length, { timeout: 15_000 }).toBe(players)
     const layout = (await probe(page))!
-    expect(layout.compact).toBe(true)
+    expect(layout.compact).toBe(compact)
     for (const seat of layout.seats) {
       expect(offScreen(seat, layout.free), `seat ${seat.playerId} is off screen: ${JSON.stringify(layout)}`).toBe(false)
     }
+    expect(overlaps(layout), JSON.stringify(layout)).toEqual([])
   } finally {
     await Promise.all(others.map((o) => o.dispose()))
   }
@@ -624,17 +647,25 @@ async function sixWayShowdownFitsTheScreen(page: import('@playwright/test').Page
 
 test.describe('phone layout: portrait', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
-  test('every seat and showdown row of a six-way hand stays on screen', async ({ page }) => {
+  test('every seat and showdown row of a six-way hand stays on screen, without overlapping', async ({ page }) => {
     test.setTimeout(90_000)
-    await sixWayShowdownFitsTheScreen(page)
+    await showdownFitsTheScreen(page, 6, true)
   })
 })
 
 test.describe('phone layout: landscape', () => {
   test.use({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true })
-  test('every seat and showdown row of a six-way hand stays on screen', async ({ page }) => {
-    test.setTimeout(90_000)
-    await sixWayShowdownFitsTheScreen(page)
+  test('every seat and showdown row of a ten-way hand stays on screen, without overlapping', async ({ page }) => {
+    test.setTimeout(120_000)
+    await showdownFitsTheScreen(page, 10, true)
+  })
+})
+
+test.describe('full table', () => {
+  test.use({ viewport: { width: 1280, height: 800 } })
+  test('ten showdown rows fit around the table without overlapping', async ({ page }) => {
+    test.setTimeout(120_000)
+    await showdownFitsTheScreen(page, 10, false)
   })
 })
 

@@ -89,7 +89,7 @@ export interface SceneState {
   holdUntil: number
   holdTimer: ReturnType<typeof setTimeout> | null
   /**
-   * Phone layout: simplified card faces, pocket-only showdown rows placed on the table side of
+   * Phone layout: simplified card faces, showdown rows placed on the table side of
    * each seat, and badges beside the avatar — so seats fit a short screen.
    */
   compact: boolean

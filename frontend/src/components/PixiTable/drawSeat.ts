@@ -2,6 +2,7 @@ import { BlurFilter, Container, FillGradient, Graphics, Text, TextStyle } from '
 import type { PlayerView } from '../../api/types'
 import { parseCard } from '../../api/cards'
 import { formatEquity, type SeatEquity } from '../../game/runoutOdds'
+import { showdownRow, type RowCard } from '../../game/showdownRow'
 import { hex } from '../../theme'
 
 const STYLE_NAME      = new TextStyle({ fontFamily: 'Cinzel, Georgia, serif', fontSize: 12, fontWeight: '600', fill: hex.cream, letterSpacing: 0.5 })
@@ -186,23 +187,9 @@ function makeMiniCard(cardCode: string, isPocket: boolean, simple: boolean): Con
 // ─── showdown hand row ────────────────────────────────────────────────────────
 
 const MINI_GAP = 3
-const DIVIDER_GAP = 7   // space either side of the pocket | board divider
+const DIVIDER_GAP = 7   // space either side of the hand | pocket divider
 const WIDE_ROW_SCALE = 0.88
 
-/**
- * Fills `section` with a player's showdown cards, centered at x = 0:
- *
- *     HAND NAME
- *     [pocket₁ pocket₂] ┊ [board cards that complete the hand]
- *
- * Both pocket cards always sit on the left, so a player's own cards are visible
- * even when the best five ignore them: a pocket card that plays gets the gold ring,
- * one that doesn't is dimmed. Only the board cards the hand uses follow the
- * divider, so no card is drawn twice and the row is 5–7 cards wide.
- *
- * With no hand yet (pocket cards tabled during an all-in runout) only the pair is
- * shown. With no pocket cards known, the hand's five cards are shown as-is.
- */
 /** What a seat shows about its hand at showdown; all empty outside one. */
 export interface SeatShowdown {
   hand?: PlayerView['bestHand']
@@ -211,7 +198,16 @@ export interface SeatShowdown {
   equity?: SeatEquity
 }
 
-function buildHandSection(section: Container, { hand = null, pocket: pocketCards = [], equity }: SeatShowdown, compact: boolean) {
+/**
+ * Fills `section` with a player's showdown cards, centered at x = 0:
+ *
+ *     HAND NAME
+ *     [the five cards of the hand, highest first] ┊ [pocket₁ pocket₂ — when not both play]
+ *
+ * Which cards, and which are ringed or dimmed, is `showdownRow`. On a crowded table the whole section
+ * is shrunk afterwards (`fitShowdownRows`) so it doesn't run into its neighbours.
+ */
+function buildHandSection(section: Container, { hand = null, pocket = [], equity }: SeatShowdown, compact: boolean) {
   // One heading over the cards: the hand's name once the board is out, or — while an all-in board is still
   // being run out — the chance of winning. Kept above the row rather than beside it, so the row never
   // grows sideways into a neighbouring seat.
@@ -232,26 +228,20 @@ function buildHandSection(section: Container, { hand = null, pocket: pocketCards
   row.y = rowY
   section.addChild(row)
 
-  const inHand = new Set(hand?.cards ?? [])
-  const pocket = pocketCards
-  // Phones show just the pocket pair (the board is on the felt); otherwise the board cards the hand uses follow.
-  const board = hand && !compact ? hand.cards.filter((c) => !pocket.includes(c)) : []
+  const { hand: handCards, aside } = showdownRow(hand, pocket)
 
   let x = 0
-  const place = (card: Container) => {
-    card.x = x
-    row.addChild(card)
+  const place = ({ card, ringed, dimmed }: RowCard) => {
+    const mc = makeMiniCard(card, ringed, compact)
+    if (dimmed) mc.alpha = 0.4
+    mc.x = x
+    row.addChild(mc)
     x += MINI_W + MINI_GAP
   }
 
-  for (const card of pocket) {
-    const plays = hand != null && inHand.has(card)
-    const mc = makeMiniCard(card, plays, compact)
-    if (hand && !plays) mc.alpha = 0.4
-    place(mc)
-  }
+  handCards.forEach(place)
 
-  if (pocket.length > 0 && board.length > 0) {
+  if (handCards.length > 0 && aside.length > 0) {
     x += DIVIDER_GAP - MINI_GAP
     const divider = new Graphics()
     divider.moveTo(0, 3).lineTo(0, MINI_H - 3).stroke({ color: hex.bronze, alpha: 0.9, width: 1 })
@@ -260,10 +250,10 @@ function buildHandSection(section: Container, { hand = null, pocket: pocketCards
     x += DIVIDER_GAP
   }
 
-  for (const card of board) place(makeMiniCard(card, false, compact))
+  aside.forEach(place)
 
   const width = x - MINI_GAP
-  const scale = pocket.length + board.length >= 7 ? WIDE_ROW_SCALE : 1
+  const scale = handCards.length + aside.length >= 7 ? WIDE_ROW_SCALE : 1
   row.scale.set(scale)
   row.x = (-width * scale) / 2
 }
@@ -503,8 +493,10 @@ export function updateSeat(
 
   s.readyDot.visible = !roundInProgress && isReady && player.status === 'ONLINE'
 
-  // Showdown hand section
+  // Showdown hand section — drawn at full size; fitShowdownRows shrinks it on a crowded table.
   s.handSection.removeChildren()
+  s.handSection.scale.set(1)
+  s.handSection.pivot.y = 0
   if (showdown.hand || showdown.pocket) {
     buildHandSection(s.handSection, showdown, compact)
   }
@@ -541,7 +533,13 @@ export function updateSeat(
     s.chipsText.y = y; y += s.chipsText.height + LINE_GAP
     if (s.statusContainer.children.length > 0) { s.statusContainer.y = y; y += 14 + LINE_GAP } else { s.statusContainer.y = y }
     s.handSection.x = 0
-    // Phones: the row goes on the table side of the seat (above it), not further off the screen's edge.
-    s.handSection.y = compact ? -avatarH / 2 - LINE_GAP - s.handSection.height : y
+    // Phones: the row goes on the table side of the seat (above it), not further off the screen's edge —
+    // hung from its bottom edge, so shrinking it keeps it against the seat.
+    if (compact) {
+      s.handSection.pivot.y = s.handSection.children.length > 0 ? s.handSection.getLocalBounds().maxY : 0
+      s.handSection.y = -avatarH / 2 - LINE_GAP
+    } else {
+      s.handSection.y = y
+    }
   }
 }

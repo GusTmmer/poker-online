@@ -5,7 +5,7 @@ import type { GameEvent } from '../../game/events'
 import type { Frame, FrameBus } from '../../game/frameBus'
 import { potResultLines } from '../../game/potResults'
 import {
-  LW, LH, SCENE_Y_OFFSET,
+  LW, LH, SCENE_Y_OFFSET, COMPACT_CONTENT_W, COMPACT_CONTENT_H, PHONE_CONTENT_W, PHONE_CONTENT_H,
   CARD_STADIUM,
   slotPosition,
 } from './layout'
@@ -226,14 +226,6 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
 // Fits the table into the part of the game stage the control bar leaves free: above a
 // bottom bar, or left of the side column on short (phone landscape) screens.
 const DEFAULT_BAR_HEIGHT = 88
-// On short screens the logical canvas' empty margins are cropped: fit this much of the
-// scene (seats, labels and showdown rows) rather than the full 800×560.
-const COMPACT_CONTENT_W = 740
-const COMPACT_CONTENT_H = 500
-// The phone layout keeps every seat — labels and showdown row included — within this box around the
-// table's centre (see the compact branches in drawSeat), so it can be cropped tighter and drawn larger.
-const PHONE_CONTENT_W = 720
-const PHONE_CONTENT_H = 480
 
 function doResize(
   container: HTMLElement,
@@ -297,8 +289,9 @@ function rebuildForLayout(scene: SceneState) {
 
 /**
  * Dev-only test seam: reports, in game-stage CSS px (before any rotation), the free area beside the
- * control bar and the box around each seat's avatar, labels and showdown row — so e2e tests can
- * check that nothing is drawn off screen. Also how many board cards the table shows and whether it has
+ * control bar, the box around each seat's avatar, labels and showdown row (and the labels and row on
+ * their own), the board and the pot — so e2e tests can check that nothing is drawn off screen or on
+ * top of something else. Also how many board cards the table shows and whether it has
  * [settled] — nothing held, dealing or moving — so screenshots wait for the table, not a guessed delay.
  */
 function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HTMLCanvasElement) {
@@ -309,24 +302,28 @@ function exposeLayoutProbe(scene: SceneState, container: HTMLElement, canvas: HT
     const free = { w: stageW - insets.right, h: stageH - insets.bottom }
     const left = parseFloat(canvas.style.left), top = parseFloat(canvas.style.top)
     const k = parseFloat(canvas.style.width) / LW
-    const seats = [...scene.seats.entries()].map(([playerId, { seatObj: s }]) => {
-      const parts = [s.avatar, s.nameText, s.chipsText, s.badges, s.statusContainer, s.handSection]
-        .filter((p) => p.visible && (p.children.length > 0 || p === s.nameText || p === s.chipsText || p === s.avatar))
-        .map((p) => p.getBounds())
-      const x0 = Math.min(...parts.map((b) => b.x)), y0 = Math.min(...parts.map((b) => b.y))
-      const x1 = Math.max(...parts.map((b) => b.x + b.width)), y1 = Math.max(...parts.map((b) => b.y + b.height))
-      return {
-        playerId,
-        hasShowdownRow: s.handSection.children.length > 0,
-        left: left + x0 * k, top: top + y0 * k, right: left + x1 * k, bottom: top + y1 * k,
-      }
-    })
-    const cards = scene.myCardsContainer.visible ? scene.myCardsContainer.getBounds() : null
-    const myCards = cards && {
-      left: left + cards.x * k, top: top + cards.y * k,
-      right: left + (cards.x + cards.width) * k, bottom: top + (cards.y + cards.height) * k,
+    const box = (parts: Container[]) => {
+      const bounds = parts.filter((p) => p.visible).map((p) => p.getBounds()).filter((b) => b.width > 0)
+      if (bounds.length === 0) return null
+      const x0 = Math.min(...bounds.map((b) => b.x)), y0 = Math.min(...bounds.map((b) => b.y))
+      const x1 = Math.max(...bounds.map((b) => b.x + b.width)), y1 = Math.max(...bounds.map((b) => b.y + b.height))
+      return { left: left + x0 * k, top: top + y0 * k, right: left + x1 * k, bottom: top + y1 * k }
     }
-    return { free, compact: scene.compact, seats, myCards, community: scene.shownCommunity.length, settled: settled(scene) }
+    const seats = [...scene.seats.entries()].map(([playerId, { seatObj: s }]) => ({
+      playerId,
+      hasShowdownRow: s.handSection.children.length > 0,
+      // The avatar, labels and badges; the showdown row on its own; and the box around both.
+      labels: box([s.avatar, s.nameText, s.chipsText, s.badges, s.statusContainer])!,
+      row: box([s.handSection]),
+      ...box([s.avatar, s.nameText, s.chipsText, s.badges, s.statusContainer, s.handSection])!,
+    }))
+    return {
+      free, compact: scene.compact, seats,
+      myCards: box([scene.myCardsContainer]),
+      board: box([scene.communityRow]),
+      pot: box([scene.potContainer]),
+      community: scene.shownCommunity.length, settled: settled(scene),
+    }
   }
 }
 

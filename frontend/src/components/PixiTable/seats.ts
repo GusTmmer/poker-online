@@ -1,7 +1,10 @@
-import { Graphics } from 'pixi.js'
+import { Graphics, type Container } from 'pixi.js'
 import type { GameStateUpdate, PlayerView } from '../../api/types'
 import { hex } from '../../theme'
-import { SEAT_STADIUM, CARD_STADIUM, CHIP_STADIUM, CHIP_ALONG, slotPosition } from './layout'
+import {
+  SEAT_STADIUM, CARD_STADIUM, CHIP_STADIUM, CHIP_ALONG, slotPosition,
+  LW, LH, SCENE_Y_OFFSET, COMPACT_CONTENT_W, PHONE_CONTENT_W, PHONE_CONTENT_H,
+} from './layout'
 import { drawPile, makePile, pileChipCount, pileUnit } from './chipPile'
 import { buildSeat, updateSeat } from './drawSeat'
 import { oddsAt } from '../../game/runoutOdds'
@@ -156,8 +159,85 @@ export function updateSeats(
     }
   }
 
+  fitShowdownRows(scene)
   renderEmptySeats(scene, seatCount, mySlot, occupied)
   updateMyCards(scene, gameState, myPlayerId, mySlot, seatCount)
+}
+
+// ─── showdown rows on a crowded table ─────────────────────────────────────────
+const MIN_ROW_SCALE = 0.55
+const ROW_SCALE_STEP = 0.03
+const ROW_CLEARANCE = 6
+
+interface Rect { x0: number; y0: number; x1: number; y1: number }
+
+function rectOf(...parts: Container[]): Rect | null {
+  const bounds = parts.filter((p) => p.visible).map((p) => p.getBounds()).filter((b) => b.width > 0)
+  if (bounds.length === 0) return null
+  return {
+    x0: Math.min(...bounds.map((b) => b.minX)), y0: Math.min(...bounds.map((b) => b.minY)),
+    x1: Math.max(...bounds.map((b) => b.maxX)), y1: Math.max(...bounds.map((b) => b.maxY)),
+  }
+}
+
+const clash = (a: Rect, b: Rect) =>
+  a.x0 < b.x1 + ROW_CLEARANCE && b.x0 < a.x1 + ROW_CLEARANCE && a.y0 < b.y1 + ROW_CLEARANCE && b.y0 < a.y1 + ROW_CLEARANCE
+
+/**
+ * Shrinks the showdown rows that would run into another seat, another row, the board or the pot, or past
+ * the part of the table that's on screen — up to ten seats can show a 7-card row. Each row keeps its
+ * anchor (its top edge; on phones the bottom edge, against the seat) and gives way in small steps, the
+ * larger of two clashing rows first, so only the crowded spots shrink and an open table stays full size.
+ */
+function fitShowdownRows(scene: SceneState) {
+  const entries = [...scene.seats.values()]
+  const rows = entries.filter((e) => e.seatObj.handSection.children.length > 0).map((e) => {
+    const section = e.seatObj.handSection
+    return { playerId: e.playerId, section, anchor: section.getGlobalPosition(), natural: rectOf(section)!, scale: 1 }
+  })
+  if (rows.length === 0) return
+
+  const at = ({ anchor: a, natural: n }: typeof rows[number], k: number): Rect => ({
+    x0: a.x + (n.x0 - a.x) * k, y0: a.y + (n.y0 - a.y) * k,
+    x1: a.x + (n.x1 - a.x) * k, y1: a.y + (n.y1 - a.y) * k,
+  })
+  const labels = entries.map((e) => {
+    const s = e.seatObj
+    return { playerId: e.playerId, rect: rectOf(s.avatar, s.nameText, s.chipsText, s.badges, s.statusContainer) }
+  })
+  const fixed = [rectOf(scene.communityRow), rectOf(scene.potContainer)].filter((r) => r != null)
+  // What's on screen, in the canvas' logical space: the phone crop all round; otherwise the narrower of the
+  // two desktop crops across — the local player's row hangs below the crop by design (see doResize).
+  const centreY = LH / 2 - SCENE_Y_OFFSET
+  const halfW = (scene.compact ? PHONE_CONTENT_W : COMPACT_CONTENT_W) / 2
+  const area = scene.compact
+    ? { x0: LW / 2 - halfW, x1: LW / 2 + halfW, y0: centreY - PHONE_CONTENT_H / 2, y1: centreY + PHONE_CONTENT_H / 2 }
+    : { x0: LW / 2 - halfW, x1: LW / 2 + halfW, y0: -Infinity, y1: Infinity }
+
+  for (const row of rows) {
+    const blocked = (k: number) => {
+      const r = at(row, k)
+      return r.x0 < area.x0 || r.x1 > area.x1 || r.y0 < area.y0 || r.y1 > area.y1 ||
+        fixed.some((f) => clash(r, f)) ||
+        labels.some((l) => l.playerId !== row.playerId && l.rect != null && clash(r, l.rect))
+    }
+    while (row.scale > MIN_ROW_SCALE && blocked(row.scale)) row.scale = Math.max(MIN_ROW_SCALE, row.scale - ROW_SCALE_STEP)
+  }
+
+  for (let changed = true; changed;) {
+    changed = false
+    for (let i = 0; i < rows.length; i++) {
+      for (let j = i + 1; j < rows.length; j++) {
+        const a = rows[i], b = rows[j]
+        if (!clash(at(a, a.scale), at(b, b.scale))) continue
+        const give = (a.scale > b.scale ? [a] : b.scale > a.scale ? [b] : [a, b]).filter((r) => r.scale > MIN_ROW_SCALE)
+        for (const r of give) r.scale = Math.max(MIN_ROW_SCALE, r.scale - ROW_SCALE_STEP)
+        if (give.length > 0) changed = true
+      }
+    }
+  }
+
+  for (const row of rows) row.section.scale.set(row.scale)
 }
 
 // ─── local player face-up cards ───────────────────────────────────────────────
