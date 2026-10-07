@@ -118,6 +118,9 @@ export function PixiPokerTable({ bus, myPlayerId, maxPlayers, onRunoutChange, co
       canvas.style.top      = '0'
       canvas.style.left     = '0'
       container.appendChild(canvas)
+      // Software or mobile GPUs can drop the context (tab backgrounded, GPU reset); the table then freezes
+      // on its last frame. Say so, rather than leave a silent freeze.
+      canvas.addEventListener('webglcontextlost', () => console.error('[PixiPokerTable] WebGL context lost'))
 
       const root = new Container()
       root.position.set(LW / 2, LH / 2 - SCENE_Y_OFFSET)
@@ -577,11 +580,17 @@ function scheduleHeld(scene: SceneState, onRunout: RunoutListener) {
     // Played as if it had just arrived; it may set a fresh hold, which re-arms the timer for the rest.
     const rest = scene.held
     scene.held = []
-    processFrame(scene, next, onRunout)
-    if (scene.runout) { scene.runout.queued.push(...rest); return }
-    scene.held = [...scene.held, ...rest]
-    syncPresenting(scene, onRunout)
-    if (scene.held.length > 0) scheduleHeld(scene, onRunout)
+    try {
+      processFrame(scene, next, onRunout)
+    } finally {
+      // Even if playing that frame failed, the rest still play and the controls follow.
+      if (scene.runout) scene.runout.queued.push(...rest)
+      else {
+        scene.held = [...scene.held, ...rest]
+        syncPresenting(scene, onRunout)
+        if (scene.held.length > 0) scheduleHeld(scene, onRunout)
+      }
+    }
   }, Math.max(0, scene.holdUntil - performance.now()))
 }
 
@@ -636,12 +645,17 @@ function finishRunout(scene: SceneState, onRunout: RunoutListener) {
   if (!runout) return
   scene.runout = null
 
-  applySnapshot(scene, runout.final.state, false)
-  for (const event of runout.final.events) {
-    if (RESULT_EVENTS.has(event.kind) && event.kind !== 'community_revealed') handleEvent(scene, event)
+  try {
+    applySnapshot(scene, runout.final.state, false)
+    for (const event of runout.final.events) {
+      if (RESULT_EVENTS.has(event.kind) && event.kind !== 'community_revealed') handleEvent(scene, event)
+    }
+  } finally {
+    // Whatever happens drawing the result (e.g. a lost WebGL context), the hand is over: release the
+    // controls and move on, rather than leave the table stuck on "Revealing the board…".
+    syncPresenting(scene, onRunout)
+    for (const frame of runout.queued) processFrame(scene, frame, onRunout)
   }
-  syncPresenting(scene, onRunout)
-  for (const frame of runout.queued) processFrame(scene, frame, onRunout)
 }
 
 function abortRunout(scene: SceneState, onRunout: RunoutListener) {

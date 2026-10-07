@@ -1,6 +1,7 @@
 package com.gustmmer.poker.server
 
 import com.gustmmer.poker.persistence.MemoryBasedPokerTablePersistence
+import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.config.ServerConfig
 import io.ktor.client.*
 import io.ktor.client.plugins.contentnegotiation.*
@@ -12,6 +13,8 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.testing.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -27,11 +30,22 @@ class ServerIntegrationTest {
         firestoreProjectId = "test-project",
     )
 
-    private fun ApplicationTestBuilder.configureTestApp(config: ServerConfig = testConfig): HttpClient {
+    /** Persistence whose reads can be slowed down, to hold a request inside its transaction. */
+    private class SlowLoads(private val delegate: PokerTablePersistence) : PokerTablePersistence by delegate {
+        @Volatile var loadDelayMs = 0L
+        override fun loadState(pokerTableId: Int) = delegate.loadState(pokerTableId).also {
+            if (loadDelayMs > 0) Thread.sleep(loadDelayMs)
+        }
+    }
+
+    private fun ApplicationTestBuilder.configureTestApp(
+        config: ServerConfig = testConfig,
+        wrap: (PokerTablePersistence) -> PokerTablePersistence = { it },
+    ): HttpClient {
         val bus = com.gustmmer.poker.server.bus.InMemoryTableUpdateBus()
-        val persistence = com.gustmmer.poker.server.persistence.NotifyingPersistence(
+        val persistence = wrap(com.gustmmer.poker.server.persistence.NotifyingPersistence(
             MemoryBasedPokerTablePersistence.json(), bus
-        )
+        ))
         val scheduler = com.gustmmer.poker.server.timer.InMemoryTaskScheduler()
 
         application {
@@ -512,6 +526,47 @@ class ServerIntegrationTest {
                 delay(150)
             }
         }
+    }
+
+    @Test
+    fun `a socket closing while its replacement connects never leaves the player offline`() = testApplication {
+        var slow: SlowLoads? = null
+        val alice = configureTestApp(wrap = { SlowLoads(it).also { s -> slow = s } })
+        val tableId = Json.parseToJsonElement(
+            alice.post("/api/tables") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Alice","maxPlayers":4}""")
+            }.bodyAsText()
+        ).jsonObject["tableId"]!!.jsonPrimitive.int
+        val bob = createClient { install(ContentNegotiation) { json() }; install(HttpCookies); install(WebSockets) }
+        val bobId = Json.parseToJsonElement(
+            bob.post("/api/tables/$tableId/players") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"playerName":"Bob"}""")
+            }.bodyAsText()
+        ).jsonObject["playerId"]!!.jsonPrimitive.int
+        suspend fun bobStatus() = Json.parseToJsonElement(alice.get("/api/tables/$tableId").bodyAsText())
+            .jsonObject["players"]!!.jsonArray.map { it.jsonObject }
+            .first { it["id"]!!.jsonPrimitive.int == bobId }["status"]!!.jsonPrimitive.content
+
+        val first = bob.webSocketSession("/ws/tables/$tableId")
+        first.incoming.receive()
+        assertEquals("ONLINE", bobStatus())
+
+        // What React's StrictMode (or a quick reconnect) does: a second socket connects while the first one
+        // drops. Slow reads hold the new socket's connect mid-way, so the old one's disconnect lands inside it.
+        slow!!.loadDelayMs = 200
+        val second = coroutineScope {
+            val connecting = async { bob.webSocketSession("/ws/tables/$tableId").also { it.incoming.receive() } }
+            delay(50)
+            first.close()
+            connecting.await()
+        }
+        delay(600) // let the old socket's disconnect handling finish
+        slow!!.loadDelayMs = 0
+
+        assertEquals("ONLINE", bobStatus(), "Bob is connected, so he must not be marked offline")
+        second.close()
     }
 
     @Test

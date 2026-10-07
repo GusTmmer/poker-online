@@ -25,6 +25,8 @@ async function tableAtRest(page: import('@playwright/test').Page, community: num
 }
 
 async function openTable(page: import('@playwright/test').Page, tableId: number) {
+  // An uncaught error in the app can leave the table half-drawn; surface it in the test output.
+  page.on('pageerror', (e) => console.log('[page error]', e.stack ?? e.message))
   await page.addInitScript(() => {
     const OrigWS = window.WebSocket
     window.WebSocket = class extends OrigWS {

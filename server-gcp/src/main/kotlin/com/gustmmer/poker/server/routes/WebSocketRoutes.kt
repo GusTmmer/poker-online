@@ -37,6 +37,16 @@ fun Application.configureWebSocketRoutes(
                 return@webSocket
             }
 
+            // Register the socket BEFORE bringing the player online. A previous socket of theirs may be
+            // closing right now (a reconnect, or React StrictMode's double mount in dev); its disconnect
+            // handling marks the player offline only if no socket is registered, so registering first means
+            // it either sees this one or commits before our online commit below, which then wins.
+            // A reconnect on a new session displaces the old one; close it so its coroutine ends now instead
+            // of lingering until the ping timeout.
+            connectionManager.addConnection(tableId, session.playerId, this)?.let { displaced ->
+                runCatching { displaced.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Replaced by a new connection")) }
+            }
+
             // Bring the (re)connecting player ONLINE through a versioned save so a concurrent
             // round mutation can't be silently lost. setPlayerOnline no-ops if already ONLINE.
             val connect = withTable(tableId, persistence) { table ->
@@ -49,16 +59,10 @@ fun Application.configureWebSocketRoutes(
             val table = when (connect) {
                 is ServiceResult.Ok -> connect.value
                 is ServiceResult.Failed -> {
+                    connectionManager.removeConnection(tableId, session.playerId, this)
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, connect.error))
                     return@webSocket
                 }
-            }
-
-            // A reconnect on a new session displaces the old one; close it so its coroutine ends now
-            // instead of lingering until the ping timeout. Its finally-block is a no-op here because
-            // the player is already registered under the new session.
-            connectionManager.addConnection(tableId, session.playerId, this)?.let { displaced ->
-                runCatching { displaced.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Replaced by a new connection")) }
             }
             connectionManager.broadcastGameState(table.currentState)
 
@@ -75,18 +79,17 @@ fun Application.configureWebSocketRoutes(
             } finally {
                 connectionManager.removeConnection(tableId, session.playerId, this)
 
-                // Only mark offline if the player has NOT already reconnected on a new session.
-                // Without this check, a reconnecting player's new session sets them ONLINE, but
-                // the old session's finally block would overwrite that with OFFLINE, causing
-                // startTimer to see OFFLINE and immediately auto-play their turn.
-                if (!connectionManager.isPlayerConnected(tableId, session.playerId)) {
-                    // setPlayerOffline only transitions an ONLINE player, so it never clobbers a
-                    // reconnect that already set the player back ONLINE on a fresh session. The change
-                    // (if any) fans out via the bus to any players still connected.
-                    withTable(tableId, persistence) { table ->
+                // Only mark offline if the player has NOT reconnected on a new session — otherwise the old
+                // session would overwrite the new one's ONLINE with OFFLINE, and startTimer would auto-play
+                // their turn. The check runs inside the transaction: if the new session's online commit lands
+                // meanwhile, the version check retries this block, which then sees the new session.
+                // setPlayerOffline only transitions an ONLINE player; the change (if any) fans out via the
+                // bus to any players still connected.
+                withTable(tableId, persistence) { table ->
+                    if (!connectionManager.isPlayerConnected(tableId, session.playerId)) {
                         table.setPlayerOffline(session.playerId)
-                        ServiceResult.Ok(Unit)
                     }
+                    ServiceResult.Ok(Unit)
                 }
             }
         }
