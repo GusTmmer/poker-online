@@ -14,7 +14,18 @@ steps:
   - id: engine-tests
     name: gradle:8.5-jdk21
     entrypoint: gradle
-    args: [':poker-engine:test', ':server-gcp:test', '-PskipEmulatorTests', '--no-daemon']
+    args: [':poker-engine:test', '--no-daemon']
+    # Shared with server-tests (/workspace persists between steps), so dependencies download once.
+    env: ['GRADLE_USER_HOME=/workspace/.gradle']
+
+  # A step of its own, after the engine's: compiling the server alongside the engine tests starves the
+  # engine's timing test (ShowdownOddsTest) on the 2-vCPU default machine.
+  - id: server-tests
+    name: gradle:8.5-jdk21
+    entrypoint: gradle
+    args: [':server-gcp:test', '-PskipEmulatorTests', '--no-daemon']
+    env: ['GRADLE_USER_HOME=/workspace/.gradle']
+    waitFor: ['engine-tests']
 
   - id: frontend-tests
     name: node:22-alpine
@@ -26,7 +37,7 @@ steps:
   - id: build
     name: gcr.io/cloud-builders/docker
     args: ['build', '-t', '${_IMAGE}:${SHORT_SHA}', '-t', '${_IMAGE}:latest', '.']
-    waitFor: ['engine-tests', 'frontend-tests']
+    waitFor: ['engine-tests', 'server-tests', 'frontend-tests']
 
   - id: push
     name: gcr.io/cloud-builders/docker
