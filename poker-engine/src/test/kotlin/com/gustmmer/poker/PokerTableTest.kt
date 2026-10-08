@@ -25,6 +25,18 @@ class PokerTableTest {
     }
 
     @Test
+    fun `a departed player's id is never handed out again, across a save and restore`() {
+        val table = PokerTable.new(id = 7, firstPlayer = Player(0, "Alice"), config = defaultConfig, persistence = persistence)
+        table.playerJoin(Player(table.currentState.nextPlayerId, "Bob"))
+        table.kickPlayer(1)
+        table.commit()
+
+        val restored = PokerTable.restore(7, persistence)!!
+        assertEquals(listOf(0), restored.currentState.players.map { it.id })
+        assertEquals(2, restored.currentState.nextPlayerId)
+    }
+
+    @Test
     fun `full game sequence with serialization and restoration`() {
         val tableId = 1
         val table = PokerTable.new(

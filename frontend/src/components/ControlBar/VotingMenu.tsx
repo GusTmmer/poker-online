@@ -5,7 +5,7 @@ import type { GameStateUpdate } from '../../api/types'
 import { createVoteSession, renameTable, requestKick, requestPause, requestUnpause } from '../../api/client'
 import { MAX_TABLE_NAME_LENGTH } from '../../api/tableLabel'
 import { copyToClipboard, inviteLink } from '../../api/inviteLink'
-import { useSession } from '../../context/SessionContext'
+import { useSession } from '../../context/useSession'
 import { gradient, palette } from '../../theme'
 
 const MenuRoot = styled.div`
@@ -253,7 +253,7 @@ export function VotingMenu({ gameState, myPlayerId, tableId, openDown = false }:
           <Item data-testid="menu-copy-invite" onClick={() => void copyInvite()}>
             Copy invite link
           </Item>
-          <Item onClick={openRename}>Rename table…</Item>
+          {gameState.ownerId === myPlayerId && <Item onClick={openRename}>Rename table…</Item>}
           <Divider />
           {gameState.gameStatus === 'PAUSED' ? (
             <Item onClick={() => fire(() => requestUnpause(tableId))}>Vote: Unpause game</Item>

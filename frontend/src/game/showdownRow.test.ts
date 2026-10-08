@@ -13,12 +13,12 @@ describe('showdownRow', () => {
     expect(row.aside).toEqual([])
   })
 
-  it('adds the pocket pair when only one of them plays: 7 cards, the unused one dimmed', () => {
+  it('adds the pocket pair, both dimmed, when only one of them plays: 7 cards, ringed only in the five', () => {
     const row = showdownRow({ name: 'One Pair', cards: ['3D', '3H', 'AH', 'JD', '8D'] }, ['AH', '5C'])
     expect(ringed(row.hand)).toEqual(['AH'])
     expect(cards(row.aside)).toEqual(['AH', '5C'])
-    expect(ringed(row.aside)).toEqual(['AH'])
-    expect(dimmed(row.aside)).toEqual(['5C'])
+    expect(ringed(row.aside)).toEqual([])
+    expect(dimmed(row.aside)).toEqual(['AH', '5C'])
     expect(row.hand.length + row.aside.length).toBe(7)
   })
 

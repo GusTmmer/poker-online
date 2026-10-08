@@ -37,7 +37,7 @@ class PokerRound(state: PokerRoundState) {
      * straight to showdown here instead of parking the turn on a player with no chips.
      */
     fun start(): PokerRoundState {
-        assert(state.pokerRoundStage == PokerRoundStage.INIT)
+        check(state.pokerRoundStage == PokerRoundStage.INIT) { "A round can only be started once" }
 
         takeBlinds()
         dealCards()

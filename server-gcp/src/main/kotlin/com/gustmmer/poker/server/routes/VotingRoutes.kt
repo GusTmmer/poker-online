@@ -4,8 +4,7 @@ import com.gustmmer.poker.ActiveVote
 import com.gustmmer.poker.server.service.VotingService
 import com.gustmmer.poker.server.service.respond
 import com.gustmmer.poker.server.session.JwtService
-import com.gustmmer.poker.server.session.extractSession
-import com.gustmmer.poker.server.session.respondUnauthorized
+import com.gustmmer.poker.server.session.requireSession
 import com.gustmmer.poker.server.voting.VoteOutcome
 import com.gustmmer.poker.server.voting.VoteResolution
 import io.ktor.http.*
@@ -54,23 +53,13 @@ fun Application.configureVotingRoutes(
         post<TableVotingSessionsResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             val request = call.receive<CreateVoteSessionRequest>()
 
-            val resolution: VoteResolution = when (request.resolution) {
-                "PAUSE_GAME" -> VoteResolution.PauseGame
-                "UNPAUSE_GAME" -> VoteResolution.UnpauseGame
-                "KICK_PLAYER" -> {
-                    val target = request.targetPlayerId
-                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "targetPlayerId required for KICK_PLAYER"))
-                    VoteResolution.KickPlayer(target)
-                }
-                "RESTART_GAME" -> VoteResolution.RestartGame
-                "INCREASE_BLINDS" -> VoteResolution.IncreaseBlinds
-                else -> return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Unknown resolution type"))
-            }
+            // VoteResolution.of is the one mapping from the wire name; it rejects unknown types and a kick without a target.
+            val resolution = runCatching { VoteResolution.of(request.resolution, request.targetPlayerId) }
+                .getOrElse { return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to (it.message ?: "Invalid resolution"))) }
 
             call.respond(votingService.createSession(tableId, resolution, session.playerId))
         }
@@ -79,8 +68,7 @@ fun Application.configureVotingRoutes(
             val tableId = resource.tableId
             val sessionId = resource.sessionId
 
-            val playerSession = call.extractSession(jwtService, tableId)
-                ?: return@put call.respondUnauthorized()
+            val playerSession = call.requireSession(jwtService, tableId) ?: return@put
 
             val request = call.receive<CastVoteRequest>()
             val yes = when (request.vote.lowercase()) {
@@ -98,8 +86,7 @@ fun Application.configureVotingRoutes(
         get<TableVotingSessionsResource> { resource ->
             val tableId = resource.tableId
 
-            call.extractSession(jwtService, tableId)
-                ?: return@get call.respondUnauthorized()
+            call.requireSession(jwtService, tableId) ?: return@get
 
             call.respond(HttpStatusCode.OK, votingService.openSessions(tableId))
         }

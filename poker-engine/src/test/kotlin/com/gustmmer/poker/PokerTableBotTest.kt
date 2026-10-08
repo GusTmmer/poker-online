@@ -37,6 +37,8 @@ class PokerTableBotTest {
     @Test
     fun `bots never hold up ready-up`() {
         val table = tableWithBots(BotPersonality.BALANCED, BotPersonality.BALANCED)
+        table.newPokerRound()
+        table.clearRoundState()
         assertTrue(table.playerReady(0), "the only human being ready is enough")
     }
 

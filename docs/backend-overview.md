@@ -97,7 +97,6 @@ compare-and-swap on a monotonic `version` field. This is the foundation of the
 optimistic-concurrency model in section 5. Implementations:
 
 - `MemoryBasedPokerTablePersistence` — tests / local.
-- `FileBasedPokerTablePersistence` — local persistence to disk.
 - `FirestorePokerTablePersistence` — production (lives in `server-gcp`).
 
 Tests that need to seed arbitrary state use an impl-only `seed()`/`json()` seam, never
@@ -139,8 +138,8 @@ why a single in-process test can exercise the exact production fan-out path.
 | Plugin | Why it's there |
 |---|---|
 | `Resources` | Type-safe route definitions (see `ApiResources.kt`). |
-| `XForwardedHeaders` | On Cloud Run the real client IP is in `X-Forwarded-For`; trust it so rate-limit keys are per-client, not per-load-balancer. |
-| `RateLimit` | Per-IP token bucket on the two document-*creating* endpoints (table create + join) — the cheapest abuse vector. |
+| `ResponseHeaders` (own) | Hardening on every response (`nosniff`, `Referrer-Policy`, no framing via `frame-ancestors 'none'` / `X-Frame-Options`) and caching: hashed `/assets/` immutable, SPA HTML revalidated, API `no-store`. |
+| `RateLimit` | Per-IP token bucket on the two document-*creating* endpoints (table create + join) — the cheapest abuse vector. Keyed on the right-most `X-Forwarded-For` entry (the hop Cloud Run appends); `XForwardedHeaders` is deliberately not installed, since it trusts the spoofable left-most one. |
 | `ContentNegotiation` (kotlinx JSON) | `ignoreUnknownKeys`, `isLenient`, `encodeDefaults`. |
 | `WebSockets` | 15s ping / 30s timeout keepalive for the push channel. |
 | `CORS` | Credentialed cross-origin **only** when a concrete `ALLOWED_ORIGIN` is set; the `*` default is dev-only (browsers reject `*` + credentials, and the JWT rides in a cookie). When the SPA is served same-origin via `STATIC_DIR`, CORS is moot. |

@@ -70,7 +70,7 @@ async function driveBotsUntil(
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 test.describe('lobby / pre-round', () => {
-  test('shows Ready Up and Start Round when no round is active', async ({ page }) => {
+  test('a player who joined can ready up, while the first hand waits for the owner', async ({ page }) => {
     const host = await BotClient.create()
     const bot2 = await BotClient.create()
 
@@ -85,7 +85,9 @@ test.describe('lobby / pre-round', () => {
       const bar = page.locator('[data-testid="control-bar"]')
       await expect(bar).toBeVisible({ timeout: 10_000 })
       await expect(bar.locator('[data-testid="btn-ready"]')).toBeVisible()
-      await expect(bar.locator('[data-testid="btn-start-round"]')).toBeVisible()
+      await expect(bar.locator('[data-testid="lobby-hint"]')).toHaveText('Waiting for Host to deal')
+      // Only the owner deals.
+      await expect(bar.locator('[data-testid="btn-start-round"]')).not.toBeVisible()
       await expect(bar.locator('[data-testid="btn-fold"]')).not.toBeVisible()
     } finally {
       await Promise.all([host.dispose(), bot2.dispose()])
@@ -324,10 +326,10 @@ test.describe('all-in runout', () => {
         expect(street.equities).toHaveLength(2)
         expect(street.equities.reduce((sum, e) => sum + e.equity, 0)).toBeCloseTo(1, 6)
       }
-      await expect(page.locator('[data-testid="btn-start-round"]')).not.toBeVisible()
+      await expect(page.locator('[data-testid="lobby-hint"]')).not.toBeVisible()
 
       // …then releases them once the showdown is revealed (three streets, each followed by a 2s beat).
-      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('[data-testid="lobby-hint"]')).toBeVisible({ timeout: 20_000 })
       await expect(page.locator('[data-testid="revealing"]')).not.toBeVisible()
     } finally {
       await bot.dispose()
@@ -395,7 +397,7 @@ test.describe('side pots', () => {
         expect(pot.winnerIds.length).toBeGreaterThan(0)
         expect(pot.contenderIds).toEqual(expect.arrayContaining(pot.winnerIds))
       }
-      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible({ timeout: 30_000 })
+      await expect(page.locator('[data-testid="lobby-hint"]')).toBeVisible({ timeout: 30_000 })
     } finally {
       await Promise.all(bots.map((b) => b.dispose()))
     }
@@ -423,7 +425,7 @@ test.describe('mobile', () => {
       const box = await bar.boundingBox()
       expect(box!.width).toBeGreaterThan(350)
       expect(box!.y + box!.height).toBeLessThanOrEqual(845)
-      await expect(page.locator('[data-testid="btn-start-round"]')).toBeVisible()
+      await expect(page.locator('[data-testid="btn-ready"]')).toBeVisible()
     } finally {
       await host.dispose()
     }

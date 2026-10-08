@@ -12,6 +12,8 @@ import com.gustmmer.poker.server.routes.TableInfoResponse
 import com.gustmmer.poker.server.routes.TableSummary
 import com.gustmmer.poker.server.timer.TurnTimerManager
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
 data class CreatedTable(val tableId: Int, val playerId: Int)
@@ -35,7 +37,12 @@ class GameService(
 
     private fun turnTimerMs(state: PokerTableState) = state.config.turnTimerSeconds * 1000L
 
-    fun createTable(request: CreateTableRequest): CreatedTable {
+    /**
+     * Creates the table under a fresh random id. An id that's already taken fails the commit's version check
+     * (the existing table is untouched), so a collision just draws another id. The write is a blocking
+     * Firestore transaction, so it runs on [Dispatchers.IO] like every other commit.
+     */
+    suspend fun createTable(request: CreateTableRequest, newId: () -> Int = PokerTable::newTableId): CreatedTable {
         val config = TableConfig(
             startingChips = request.startingChips,
             turnTimerSeconds = request.turnTimerSeconds,
@@ -48,9 +55,22 @@ class GameService(
         )
 
         val playerId = 0
-        val player = Player(playerId, normalizePlayerName(request.playerName))
-        val table = PokerTable.new(firstPlayer = player, config = config, persistence = persistence, bots = computerPlayers(request.computerPlayers))
+        repeat(CREATE_ATTEMPTS - 1) {
+            try {
+                return newTable(newId(), config, playerId, request)
+            } catch (_: ConcurrentModificationException) {
+                log.warn("Table id collision on create; drawing another id")
+            }
+        }
+        return newTable(newId(), config, playerId, request)
+    }
 
+    private suspend fun newTable(id: Int, config: TableConfig, playerId: Int, request: CreateTableRequest): CreatedTable {
+        // Built fresh per attempt: PokerTable.new deals the starting stacks onto these players.
+        val player = Player(playerId, normalizePlayerName(request.playerName))
+        val table = withContext(Dispatchers.IO) {
+            PokerTable.new(id, player, config, persistence, bots = computerPlayers(request.computerPlayers))
+        }
         return CreatedTable(tableId = table.id, playerId = playerId)
     }
 
@@ -115,9 +135,11 @@ class GameService(
             }
             table.setPlayerOffline(playerId)
             table.kickPlayer(playerId)
+            // Between hands, the players still ready may now be a majority of those left.
+            table.dealIfMajorityReady()
             ServiceResult.Ok(mapOf("status" to "left"))
         }
-        // The fold may have advanced the turn or ended the hand.
+        // The fold may have advanced the turn or ended the hand — or a hand was just dealt: arm its clock.
         if (result is ServiceResult.Ok) timerManager.settleAfterCommit(tableId)
         return result
     }
@@ -126,7 +148,8 @@ class GameService(
         val name = normalizePlayerName(playerName)
         if (name.isBlank()) return ServiceResult.Failed(HttpStatusCode.BadRequest, "Player name is required")
         val result = withTable(tableId, persistence) { table ->
-            val playerId = (table.currentState.players.maxOfOrNull { it.id } ?: -1) + 1
+            // Never a former player's id: their session cookie would then speak for the newcomer.
+            val playerId = table.currentState.nextPlayerId
             if (!table.playerJoin(Player(playerId, name))) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.Forbidden, "Table is full or closed")
             }
@@ -185,8 +208,13 @@ class GameService(
         return result
     }
 
-    suspend fun startRound(tableId: Int): ServiceResult<Map<String, String>> {
+    /** The owner deals the next hand without waiting for the others to be ready. */
+    suspend fun startRound(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         val result = withTable(tableId, persistence) { table ->
+            if (!table.isOwner(playerId)) return@withTable notOwner("start a hand")
+            if (table.currentState.gameStatus == GameStatus.PAUSED) {
+                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Game is paused")
+            }
             val existingRound = table.currentState.roundState
             if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Round already in progress")
@@ -203,8 +231,9 @@ class GameService(
         return result
     }
 
-    suspend fun restartGame(tableId: Int): ServiceResult<Map<String, String>> {
+    suspend fun restartGame(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         val result = withTable(tableId, persistence) { table ->
+            if (!table.isOwner(playerId)) return@withTable notOwner("start a new game")
             val existingRound = table.currentState.roundState
             if (existingRound != null && existingRound.pokerRoundStage.isBettingRound()) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Cannot restart during a round")
@@ -225,6 +254,9 @@ class GameService(
     suspend fun readyUp(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         var roundStarted = false
         val result = withTable(tableId, persistence) { table ->
+            if (table.currentState.gameStatus == GameStatus.PAUSED) {
+                return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Game is paused")
+            }
             if (table.currentState.gameStatus != GameStatus.WAITING) {
                 return@withTable ServiceResult.Failed(HttpStatusCode.BadRequest, "Game is not in waiting state")
             }
@@ -235,13 +267,11 @@ class GameService(
                 )
             }
 
-            val allReady = table.playerReady(playerId)
-            if (allReady) {
-                if (table.currentState.roundState != null) table.clearRoundState()
-                table.newPokerRound()
-            }
-            roundStarted = allReady
-            ServiceResult.Ok(mapOf("status" to if (allReady) "round_started" else "ready"))
+            // Readying up is being here: it counts the player among those present.
+            table.setPlayerOnline(playerId)
+            table.playerReady(playerId)
+            roundStarted = table.dealIfMajorityReady()
+            ServiceResult.Ok(mapOf("status" to if (roundStarted) "round_started" else "ready"))
         }
         if (result is ServiceResult.Ok && roundStarted) timerManager.settleAfterCommit(tableId)
         return result
@@ -250,6 +280,8 @@ class GameService(
     suspend fun setPlayerOnline(tableId: Int, playerId: Int): ServiceResult<Map<String, String>> {
         // Online flip + any auto-unpause stage together and commit once; the timer cascade runs after.
         var unpaused = false
+        var myTurn = false
+        var turnMs = 0L
         val result = withTable(tableId, persistence) { table ->
             val player = table.currentState.players.find { it.id == playerId }
                 ?: return@withTable ServiceResult.Failed(HttpStatusCode.NotFound, "Player not found")
@@ -263,35 +295,32 @@ class GameService(
                 table.unpause()
                 unpaused = true
             }
+            val round = table.currentState.roundState
+            myTurn = round != null && round.pokerRoundStage.isBettingRound() && round.playerOrdering.bettingPlayer().id == playerId
+            turnMs = turnTimerMs(table.currentState)
             ServiceResult.Ok(mapOf("status" to "activated"))
         }
         if (result !is ServiceResult.Ok) return result
 
-        val state = loadTable(tableId, persistence)
-        if (state != null) {
-            if (unpaused) {
-                timerManager.resolveExpiredTurns(tableId, turnTimerMs(state))
-            } else {
-                val roundState = state.roundState
-                if (roundState != null &&
-                    state.gameStatus == GameStatus.RUNNING &&
-                    roundState.pokerRoundStage.isBettingRound() &&
-                    roundState.playerOrdering.bettingPlayer().id == playerId
-                ) {
-                    timerManager.startTimer(tableId, turnTimerMs(state))
-                }
-            }
+        when {
+            unpaused -> timerManager.resolveExpiredTurns(tableId, turnMs)
+            // Back on their own turn: give them a fresh clock (startTimer does nothing unless the game is running).
+            myTurn -> timerManager.startTimer(tableId, turnMs)
         }
         return result
     }
 
-    suspend fun updateSettings(tableId: Int, isOpen: Boolean?, name: String?): ServiceResult<Map<String, String>> {
+    suspend fun updateSettings(tableId: Int, playerId: Int, isOpen: Boolean?, name: String?): ServiceResult<Map<String, String>> {
         val result = withTable(tableId, persistence) { table ->
+            if (!table.isOwner(playerId)) return@withTable notOwner("change the table's settings")
             table.updateConfig(isOpen = isOpen, name = name?.let(::normalizeTableName))
             ServiceResult.Ok(mapOf("status" to "settings_updated"))
         }
         return result
     }
+
+    private fun notOwner(what: String) =
+        ServiceResult.Failed(HttpStatusCode.Forbidden, "Only the table owner can $what")
 
     /** Trim and length-cap a user-supplied table name so it stays a sane, storable label. */
     private fun normalizeTableName(raw: String): String = raw.trim().take(TableConfig.MAX_NAME_LENGTH)
@@ -309,5 +338,8 @@ class GameService(
 
         /** Upper bound on a single raise increment — well above total chips in play, but overflow-safe. */
         const val MAX_RAISE = 1_000_000_000
+
+        /** Ids drawn before giving up on creating a table; a collision among 2³¹ ids is already vanishingly rare. */
+        private const val CREATE_ATTEMPTS = 3
     }
 }

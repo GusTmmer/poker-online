@@ -17,6 +17,7 @@ import com.gustmmer.poker.server.timer.CloudTasksScheduler
 import com.gustmmer.poker.server.timer.TaskScheduler
 import com.gustmmer.poker.server.timer.TurnTimerManager
 import com.gustmmer.poker.server.websocket.TableConnectionManager
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -30,6 +31,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.server.plugins.origin
+import io.ktor.server.request.path
 import kotlinx.serialization.json.Json
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
@@ -99,7 +101,7 @@ fun Application.configureServer(
 
     configureTableRoutes(jwtService, gameService, votingService)
     configureVotingRoutes(jwtService, votingService)
-    configureWebSocketRoutes(jwtService, connectionManager, persistence)
+    configureWebSocketRoutes(jwtService, connectionManager, persistence, config.allowedOrigin)
     configureInternalRoutes(timerManager, votingService, config.internalToken)
     configureStaticAndHealth(config)
 }
@@ -129,8 +131,34 @@ fun Application.configureStaticAndHealth(config: ServerConfig) {
     }
 }
 
+/**
+ * Headers every response carries. Hardening: no MIME sniffing, no referrer leaking a table link to other
+ * sites, and no framing — a poker table inside someone else's page could be clickjacked into folding or
+ * going all in. Caching: Vite's `/assets/` files are content-hashed, so they never change and can be cached
+ * for good; the SPA's HTML must be revalidated, or a browser keeps running the previous release after a
+ * deploy; API responses carry private state (a player's own cards), so they aren't stored at all.
+ */
+val ResponseHeaders = createApplicationPlugin("ResponseHeaders") {
+    onCall { call ->
+        with(call.response.headers) {
+            append("X-Content-Type-Options", "nosniff")
+            append("Referrer-Policy", "same-origin")
+            append("Content-Security-Policy", "frame-ancestors 'none'")
+            append("X-Frame-Options", "DENY")
+            append(HttpHeaders.CacheControl, cacheControlFor(call.request.path()))
+        }
+    }
+}
+
+fun cacheControlFor(path: String): String = when {
+    path.startsWith("/assets/") -> "public, max-age=31536000, immutable"
+    path.startsWith("/api/") || path.startsWith("/internal/") -> "no-store"
+    else -> "no-cache"
+}
+
 fun Application.configurePlugins(config: ServerConfig) {
     install(Resources)
+    install(ResponseHeaders)
 
     // NOTE: XForwardedHeaders is deliberately NOT installed. It rewrites `origin.remoteHost` to the
     // left-most X-Forwarded-For entry, which is fully client-supplied — a client can rotate that header

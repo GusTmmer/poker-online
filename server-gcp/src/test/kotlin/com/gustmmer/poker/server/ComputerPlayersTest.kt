@@ -85,10 +85,13 @@ class ComputerPlayersTest {
     }
 
     @Test
-    fun `the human's ready-up alone deals a hand`() = testApplication {
+    fun `the first hand waits for the owner to deal it, ready or not`() = testApplication {
         val alice = client()
         val tableId = createWithBots(alice, bots = 2)
         assertTrue(alice.ready(tableId).isOk())
+        assertEquals(GameStatus.WAITING, state(tableId).gameStatus)
+
+        assertTrue(alice.startRound(tableId).isOk())
         assertEquals(GameStatus.RUNNING, state(tableId).gameStatus)
     }
 

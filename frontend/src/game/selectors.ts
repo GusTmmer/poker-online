@@ -14,6 +14,10 @@ export interface Controls {
   mode: ControlMode
   isMyTurn: boolean
   amIReady: boolean
+  /** Only the table's owner deals a hand or starts a new game. */
+  amIOwner: boolean
+  /** Lobby only: how the next hand gets dealt — see `selectLobby`. */
+  lobby: Lobby
   /** Lobby only: one player left standing → offer a fresh game instead of a round. */
   isGameOver: boolean
   /** Acting only: chips needed to call (0 = check). */
@@ -46,7 +50,32 @@ export function selectControls(state: GameStateUpdate, myPlayerId: number): Cont
     : !roundInProgress ? 'lobby'
     : 'acting'
 
-  return { mode, isMyTurn, amIReady, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise }
+  const amIOwner = state.ownerId === myPlayerId
+  return {
+    mode, isMyTurn, amIReady, amIOwner, lobby: selectLobby(state), isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise,
+  }
+}
+
+/**
+ * Between hands: a game's first hand is the owner's to deal; after it, the next hand is dealt once more than
+ * half of the humans who are here (online, not eliminated) are ready. Mirrors the server's rule.
+ */
+export interface Lobby {
+  ownerName: string | null
+  firstHandDealt: boolean
+  /** Present humans who are ready, and how many make a majority. */
+  readyCount: number
+  readyNeeded: number
+}
+
+export function selectLobby(state: GameStateUpdate): Lobby {
+  const present = state.players.filter((p) => p.botPersonality == null && p.status === 'ONLINE')
+  return {
+    ownerName: state.players.find((p) => p.id === state.ownerId)?.name ?? null,
+    firstHandDealt: state.firstHandDealt,
+    readyCount: present.filter((p) => state.readyPlayerIds.includes(p.id)).length,
+    readyNeeded: Math.floor(present.length / 2) + 1,
+  }
 }
 
 /**

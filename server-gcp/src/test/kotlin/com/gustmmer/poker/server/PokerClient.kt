@@ -52,6 +52,9 @@ class PokerClient(private val http: HttpClient) {
     suspend fun leaveTable(tableId: Int): ApiResult =
         http.delete(TablePlayerMeResource(tableId)).toApiResult()
 
+    suspend fun rename(tableId: Int, name: String): ApiResult =
+        http.patch(TableSettingsResource(tableId)) { setJsonBody(SettingsRequest(name = name)) }.toApiResult()
+
     suspend fun joinTable(tableId: Int, playerName: String): HttpStatusCode =
         http.post(TablePlayersResource(tableId)) {
             setJsonBody(JoinRequest(playerName))

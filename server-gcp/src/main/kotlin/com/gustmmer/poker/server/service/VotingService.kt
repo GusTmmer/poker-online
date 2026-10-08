@@ -204,6 +204,8 @@ class VotingService(
         is VoteResolution.KickPlayer -> {
             val name = table.currentState.players.find { it.id == resolution.targetPlayerId }?.name ?: "Player"
             table.kickPlayer(resolution.targetPlayerId)
+            // Same as a player leaving: the ready players who remain may now be a majority.
+            table.dealIfMajorityReady()
             ResolutionEffect.Kicked(name)
         }
         is VoteResolution.RestartGame -> {

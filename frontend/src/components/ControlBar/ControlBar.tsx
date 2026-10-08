@@ -248,6 +248,14 @@ const ActionError = styled.span`
   font-family: 'Cormorant Garamond', Georgia, serif;
 `
 
+const LobbyHint = styled.span`
+  color: ${palette.creamMuted};
+  text-align: center;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 1rem;
+  font-style: italic;
+`
+
 const Waiting = styled.span`
   color: ${palette.creamMuted};
   font-family: 'Cinzel', Georgia, serif;
@@ -297,7 +305,7 @@ export function ControlBar({
   revealing = false,
   compact = false,
 }: ControlBarProps & { /** An all-in runout is still being revealed on the table. */ revealing?: boolean }) {
-  const { mode, isMyTurn, amIReady, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise } =
+  const { mode, isMyTurn, amIReady, amIOwner, lobby, isGameOver, amountToCall, minRaise, maxRaiseOnTop, canRaise } =
     selectControls(gameState, myPlayerId)
 
   const [raiseValue, setRaiseValue] = useState(0)
@@ -369,6 +377,13 @@ export function ControlBar({
   }
 
   if (mode === 'lobby') {
+    // Who deals next: the owner always can; otherwise a game's first hand waits for them, and later hands for a
+    // ready majority (paused, nothing is dealt).
+    const owner = lobby.ownerName ?? 'the owner'
+    const lobbyHint = gameState.gameStatus === 'PAUSED' ? 'Game paused'
+      : isGameOver ? (amIOwner ? null : `Waiting for ${owner} to start a new game`)
+      : !lobby.firstHandDealt ? (amIOwner ? null : `Waiting for ${owner} to deal`)
+      : `${lobby.readyCount} of ${lobby.readyNeeded} ready`
     return (
       <ControlBarShell {...shellProps}>
         {!isGameOver && (
@@ -376,9 +391,12 @@ export function ControlBar({
             {amIReady ? 'Ready ✓' : 'Ready Up'}
           </Button>
         )}
-        <Button data-testid="btn-start-round" disabled={busy} onClick={isGameOver ? handleRestartGame : handleStartRound}>
-          {isGameOver ? 'Start New Game' : 'Start Round'}
-        </Button>
+        {amIOwner && (
+          <Button data-testid="btn-start-round" disabled={busy} onClick={isGameOver ? handleRestartGame : handleStartRound}>
+            {isGameOver ? 'Start New Game' : 'Start Round'}
+          </Button>
+        )}
+        {lobbyHint && <LobbyHint data-testid="lobby-hint">{lobbyHint}</LobbyHint>}
         {actionFailed && <ActionError>{actionError ?? 'Action failed'}</ActionError>}
       </ControlBarShell>
     )

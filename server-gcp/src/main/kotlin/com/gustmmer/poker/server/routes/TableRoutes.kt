@@ -8,7 +8,7 @@ import com.gustmmer.poker.server.service.VotingService
 import com.gustmmer.poker.server.service.respond
 import com.gustmmer.poker.server.session.JwtService
 import com.gustmmer.poker.server.session.extractSession
-import com.gustmmer.poker.server.session.respondUnauthorized
+import com.gustmmer.poker.server.session.requireSession
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.plugins.ratelimit.*
@@ -178,8 +178,7 @@ fun Application.configureTableRoutes(
         delete<TablePlayerMeResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@delete call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@delete
 
             val result = gameService.leaveTable(tableId, session.playerId)
             call.response.cookies.append(jwtService.expiredSessionCookie(tableId))
@@ -189,8 +188,7 @@ fun Application.configureTableRoutes(
         post<TableActionResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             val request = call.receive<ActionRequest>()
             call.respond(gameService.applyAction(tableId, session.playerId, request))
@@ -199,26 +197,23 @@ fun Application.configureTableRoutes(
         post<TableStartRoundResource> { resource ->
             val tableId = resource.tableId
 
-            call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
-            call.respond(gameService.startRound(tableId))
+            call.respond(gameService.startRound(tableId, session.playerId))
         }
 
         post<TableRestartGameResource> { resource ->
             val tableId = resource.tableId
 
-            call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
-            call.respond(gameService.restartGame(tableId))
+            call.respond(gameService.restartGame(tableId, session.playerId))
         }
 
         post<TableReadyResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             call.respond(gameService.readyUp(tableId, session.playerId))
         }
@@ -226,8 +221,7 @@ fun Application.configureTableRoutes(
         post<TableActivateResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             call.respond(gameService.setPlayerOnline(tableId, session.playerId))
         }
@@ -235,8 +229,7 @@ fun Application.configureTableRoutes(
         post<TablePauseResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             call.respond(votingService.requestPause(tableId, session.playerId))
         }
@@ -244,8 +237,7 @@ fun Application.configureTableRoutes(
         post<TableUnpauseResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             call.respond(votingService.requestUnpause(tableId, session.playerId))
         }
@@ -253,8 +245,7 @@ fun Application.configureTableRoutes(
         post<TableKickResource> { resource ->
             val tableId = resource.tableId
 
-            val session = call.extractSession(jwtService, tableId)
-                ?: return@post call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@post
 
             val request = call.receive<KickRequest>()
             call.respond(votingService.requestKick(tableId, session.playerId, request.targetPlayerId))
@@ -263,11 +254,10 @@ fun Application.configureTableRoutes(
         patch<TableSettingsResource> { resource ->
             val tableId = resource.tableId
 
-            call.extractSession(jwtService, tableId)
-                ?: return@patch call.respondUnauthorized()
+            val session = call.requireSession(jwtService, tableId) ?: return@patch
 
             val request = call.receive<SettingsRequest>()
-            call.respond(gameService.updateSettings(tableId, request.isOpen, request.name))
+            call.respond(gameService.updateSettings(tableId, session.playerId, request.isOpen, request.name))
         }
     }
 }

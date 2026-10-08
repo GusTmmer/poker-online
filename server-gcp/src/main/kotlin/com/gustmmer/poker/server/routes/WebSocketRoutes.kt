@@ -4,20 +4,42 @@ import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.server.service.ServiceResult
 import com.gustmmer.poker.server.service.withTable
 import com.gustmmer.poker.server.session.JwtService
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import com.gustmmer.poker.server.websocket.TableConnectionManager
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import java.net.URI
+
+/**
+ * Whether a WebSocket handshake from [origin] may proceed. Browsers send `Origin` on every handshake and
+ * don't apply CORS to WebSockets, so without this check any site could open a player's socket with their
+ * session cookie and read their cards (`SameSite=Lax` already withholds the cookie cross-site; this also
+ * covers same-site origins). Allowed: the page's own origin (the handshake's `Host`), the configured
+ * [allowedOrigin] host, and clients that send no `Origin` (not a browser, so no ambient cookie to abuse).
+ */
+fun isAllowedSocketOrigin(origin: String?, host: String?, allowedOrigin: String): Boolean {
+    if (origin == null) return true
+    val originAuthority = runCatching { URI(origin).authority }.getOrNull() ?: return false
+    if (host != null && originAuthority.equals(host, ignoreCase = true)) return true
+    return allowedOrigin != "*" && originAuthority.equals(allowedOrigin, ignoreCase = true)
+}
 
 fun Application.configureWebSocketRoutes(
     jwtService: JwtService,
     connectionManager: TableConnectionManager,
     persistence: PokerTablePersistence,
+    allowedOrigin: String,
 ) {
     routing {
         webSocket("/ws/tables/{tableId}") {
+            if (!isAllowedSocketOrigin(call.request.headers[HttpHeaders.Origin], call.request.headers[HttpHeaders.Host], allowedOrigin)) {
+                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Origin not allowed"))
+                return@webSocket
+            }
+
             val tableId = call.parameters["tableId"]?.toIntOrNull()
             if (tableId == null) {
                 close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid table ID"))

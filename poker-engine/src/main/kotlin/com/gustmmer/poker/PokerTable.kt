@@ -8,8 +8,10 @@ import com.gustmmer.poker.persistence.PokerTablePersistence
 import com.gustmmer.poker.round.*
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
+import java.security.SecureRandom
 import kotlin.math.roundToInt
 import kotlin.random.Random
+import kotlin.random.asKotlinRandom
 import kotlin.random.nextInt
 
 @Serializable
@@ -28,6 +30,9 @@ data class Blinds(val big: Int, val small: Int) {
 }
 
 private val log = LoggerFactory.getLogger(PokerTable::class.java)
+
+/** Table ids are the invite: knowing one is enough to view and join the table, so they mustn't be predictable. */
+private val tableIdRandom = SecureRandom().asKotlinRandom()
 
 class PokerTable(
     private var state: PokerTableState,
@@ -53,8 +58,15 @@ class PokerTable(
         get() = state
 
     companion object {
+        /** Positive: the web client treats an id of 0 as no table at all. */
+        fun newTableId(): Int = tableIdRandom.nextInt(1..Int.MAX_VALUE)
+
+        /**
+         * Creates and commits a new table. Throws [ConcurrentModificationException] if [id] is already taken
+         * (the commit's version check fails against the existing table, which is left untouched).
+         */
         fun new(
-            id: Int = Random.nextInt(0..Int.MAX_VALUE),
+            id: Int = newTableId(),
             firstPlayer: Player,
             config: TableConfig,
             persistence: PokerTablePersistence,
@@ -69,6 +81,7 @@ class PokerTable(
                 blinds = Blinds.initial(config),
                 roundState = null,
                 config = config,
+                ownerId = firstPlayer.id,
             )
             val table = PokerTable(state, persistence)
             table.dirty = true
@@ -204,12 +217,19 @@ class PokerTable(
         }
     }
 
+    /** Seats [player] (take its id from [PokerTableState.nextPlayerId]). False when the table is closed or full. */
     fun playerJoin(player: Player): Boolean {
         if (!state.config.isOpen) return false
         if (state.players.size >= state.config.maxPlayers) return false
+        require(state.players.none { it.id == player.id }) { "Player ${player.id} is already seated" }
 
         player.addChips(state.config.startingChips)
         state.players.add(player)
+        state = state.copy(
+            nextPlayerId = maxOf(state.nextPlayerId, player.id + 1),
+            // A table every human had left gets its next human as owner.
+            ownerId = ownerAmong(state.players, state.ownerId),
+        )
         dirty = true
         return true
     }
@@ -257,6 +277,8 @@ class PokerTable(
             state.players.remove(player)
             state = state.copy(readyPlayers = state.readyPlayers - playerId)
         }
+        // Ownership passes on now, even while they stay seated to the end of the hand.
+        state = state.copy(ownerId = ownerAmong(state.players, state.ownerId, departing = state.pendingRemovals))
         dirty = true
     }
 
@@ -269,6 +291,11 @@ class PokerTable(
         dirty = true
     }
 
+    /**
+     * Marks [playerId] ready for the next hand (staged). Returns true when that hand should now start: once the
+     * game's first hand has been dealt (that one is the owner's to start), more than half of the humans who are
+     * here must be ready. Computer players never count — they're always ready.
+     */
     fun playerReady(playerId: Int): Boolean {
         check(state.gameStatus == GameStatus.WAITING) { "Game is not in waiting state" }
         val player = state.players.find { it.id == playerId } ?: return false
@@ -277,9 +304,27 @@ class PokerTable(
         state = state.copy(readyPlayers = state.readyPlayers + playerId)
         dirty = true
 
-        // Computer players are always ready.
-        return state.players.participating().filterNot { it.isBot }.all { it.id in state.readyPlayers }
+        return state.firstHandDealt() && state.majorityReady()
     }
+
+    /**
+     * Deals the next hand (staged) when the table is between hands and the ready majority of [playerReady] is
+     * in. Checked when someone readies up, and again when someone leaves — the ready players who are left can
+     * be a majority without anyone pressing Ready again. Returns true if a hand was dealt.
+     */
+    fun dealIfMajorityReady(): Boolean {
+        val s = state
+        if (s.gameStatus != GameStatus.WAITING || s.isGameOver() || !s.firstHandDealt() || !s.majorityReady()) return false
+        // A finished hand can still be on the table for a moment; clearing it realises its busts.
+        if (s.roundState != null) {
+            clearRoundState()
+            if (state.players.participating().size < 2) return false
+        }
+        newPokerRound()
+        return true
+    }
+
+    fun isOwner(playerId: Int): Boolean = state.ownerId == playerId
 
     /**
      * Resets every stack and the blinds for a fresh game. A hand still on the table is abandoned — its
@@ -287,6 +332,7 @@ class PokerTable(
      */
     fun restartGame() {
         state.players.removeAll { it.id in state.pendingRemovals }
+        state = state.copy(ownerId = ownerAmong(state.players, state.ownerId))
 
         state.players.forEach { player ->
             player.removeChips(player.chips)
@@ -364,6 +410,7 @@ class PokerTable(
         // dropped from the next hand's ordering. Idempotent: already-eliminated players are skipped.
         checkForEliminations()
         state.players.removeAll { it.id in state.pendingRemovals }
+        state = state.copy(ownerId = ownerAmong(state.players, state.ownerId))
         val nextPlayers = state.players.participating()
         if (nextPlayers.isNotEmpty()) {
             playerOrdering = playerOrdering.forNextHand(nextPlayers)

@@ -1,7 +1,7 @@
 import { useRef, useState, type PointerEvent } from 'react'
 import styled from '@emotion/styled'
 import { useNavigate } from 'react-router-dom'
-import { useSession } from '../context/SessionContext'
+import { useSession } from '../context/useSession'
 import { useGameSocket } from '../ws/useGameSocket'
 import { useStateLogger } from '../hooks/useStateLogger'
 import { useViewportMode } from '../hooks/useViewportMode'

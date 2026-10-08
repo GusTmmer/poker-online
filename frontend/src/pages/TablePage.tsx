@@ -1,6 +1,7 @@
 import { useParams } from 'react-router-dom'
 import styled from '@emotion/styled'
-import { SessionProvider, useSession } from '../context/SessionContext'
+import { SessionProvider } from '../context/SessionContext'
+import { useSession } from '../context/useSession'
 import { JoinForm } from './JoinForm'
 import { GameScreen } from './GameScreen'
 import { palette } from '../theme'
@@ -42,7 +43,7 @@ export function TablePage() {
   }
 
   return (
-    <SessionProvider tableId={numericTableId}>
+    <SessionProvider key={numericTableId} tableId={numericTableId}>
       <TableSessionGate />
     </SessionProvider>
   )

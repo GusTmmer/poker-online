@@ -29,10 +29,10 @@ sealed class VoteResolution {
         fun of(resolutionType: String, targetPlayerId: Int?): VoteResolution = when (resolutionType) {
             "PAUSE_GAME" -> PauseGame
             "UNPAUSE_GAME" -> UnpauseGame
-            "KICK_PLAYER" -> KickPlayer(requireNotNull(targetPlayerId) { "KICK_PLAYER needs a target" })
+            "KICK_PLAYER" -> KickPlayer(requireNotNull(targetPlayerId) { "targetPlayerId required for KICK_PLAYER" })
             "RESTART_GAME" -> RestartGame
             "INCREASE_BLINDS" -> IncreaseBlinds
-            else -> error("Unknown resolution type: $resolutionType")
+            else -> throw IllegalArgumentException("Unknown resolution type")
         }
 
         fun from(vote: ActiveVote): VoteResolution = of(vote.resolutionType, vote.targetPlayerId)

@@ -32,12 +32,12 @@ class AcceptanceTest {
     )
 
     // ── Scenario 1 ────────────────────────────────────────────────────────────
-    // Three players join, play a hand via fold cascade, then all ready-up to
+    // Three players join, play a hand via fold cascade, then a majority readies up to
     // automatically start the next round without a manual /start-round call.
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `scenario 1 - full hand via fold cascade, ready-up auto-starts next round`() = testApplication {
+    fun `scenario 1 - full hand via fold cascade, a ready majority starts the next round`() = testApplication {
         val (alice, bob, charlie) = threeClients()
 
         val tableId = createAndJoin(alice, bob, charlie)
@@ -52,14 +52,13 @@ class AcceptanceTest {
         // Round ended — table should be waiting for ready-ups
         assertEquals("WAITING", alice.getTable(tableId).gameStatus)
 
-        // Alice and Bob mark ready; round should NOT auto-start yet
+        // One of three ready isn't a majority; round 2 must not start yet
         assertEquals("ready", alice.ready(tableId).statusField)
-        assertEquals("ready", bob.ready(tableId).statusField)
 
-        // Charlie's ready is the last one — should auto-start round 2
-        val charlieReady = charlie.ready(tableId)
-        assertTrue(charlieReady.isOk())
-        assertEquals("round_started", charlieReady.statusField)
+        // Bob's ready makes two of three — more than half — so round 2 starts without waiting for Charlie
+        val bobReady = bob.ready(tableId)
+        assertTrue(bobReady.isOk())
+        assertEquals("round_started", bobReady.statusField)
 
         // Round 2 is now live
         assertEquals("RUNNING", alice.getTable(tableId).gameStatus)
@@ -69,6 +68,51 @@ class AcceptanceTest {
         val aliceBadAction = alice.fold(tableId)
         assertEquals(HttpStatusCode.BadRequest, aliceBadAction.status)
         assertTrue(aliceBadAction.error!!.contains("Not your turn"))
+    }
+
+    // ── Table owner ───────────────────────────────────────────────────────────
+    // Only the owner deals a hand, starts a new game or renames the table; when they leave, the
+    // longest-seated player takes over.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `only the table owner starts hands and renames the table, and ownership passes when they leave`() = testApplication {
+        val (alice, bob, charlie) = threeClients()
+        val tableId = createAndJoin(alice, bob, charlie)
+
+        val bobStarts = bob.startRound(tableId)
+        assertEquals(HttpStatusCode.Forbidden, bobStarts.status)
+        assertEquals("Only the table owner can start a hand", bobStarts.error)
+        assertEquals(HttpStatusCode.Forbidden, bob.rename(tableId, "Bob's table").status)
+        assertEquals(HttpStatusCode.Forbidden, bob.restartGame(tableId).status)
+        assertEquals("WAITING", alice.getTable(tableId).gameStatus)
+
+        assertTrue(alice.rename(tableId, "Alice's table").isOk())
+        assertEquals("Alice's table", alice.getTable(tableId).name)
+
+        // Alice leaves: Bob has been seated longest, so the table is his to run now.
+        assertTrue(alice.leaveTable(tableId).isOk())
+        assertEquals(HttpStatusCode.Forbidden, charlie.startRound(tableId).status)
+        assertTrue(bob.startRound(tableId).isOk())
+        assertEquals("RUNNING", bob.getTable(tableId).gameStatus)
+    }
+
+    @Test
+    fun `a player leaving between hands can leave the ready players a majority, which deals the next hand`() = testApplication {
+        val (alice, bob, charlie, dave) = clients(4)
+        val tableId = createAndJoin(alice, bob, charlie)
+        assertEquals(HttpStatusCode.Created, dave.joinTable(tableId, "Dave"))
+        assertTrue(alice.startRound(tableId).isOk())
+        foldCascade(listOf(alice, bob, charlie, dave), tableId)
+        assertEquals("WAITING", alice.getTable(tableId).gameStatus)
+
+        assertEquals("ready", alice.ready(tableId).statusField)
+        assertEquals("ready", bob.ready(tableId).statusField) // two of four is only half
+        assertEquals("WAITING", alice.getTable(tableId).gameStatus)
+
+        // Dave leaves: two of the three left are ready, a majority — the next hand is dealt without another Ready.
+        assertTrue(dave.leaveTable(tableId).isOk())
+        assertEquals("RUNNING", alice.getTable(tableId).gameStatus)
     }
 
     // ── Scenario 2 ────────────────────────────────────────────────────────────
@@ -398,7 +442,10 @@ class AcceptanceTest {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private fun ApplicationTestBuilder.threeClients(): Triple<PokerClient, PokerClient, PokerClient> {
+    private fun ApplicationTestBuilder.threeClients(): Triple<PokerClient, PokerClient, PokerClient> =
+        clients(3).let { (a, b, c) -> Triple(a, b, c) }
+
+    private fun ApplicationTestBuilder.clients(count: Int): List<PokerClient> {
         val bus = com.gustmmer.poker.server.bus.InMemoryTableUpdateBus()
         val persistence = com.gustmmer.poker.server.persistence.NotifyingPersistence(
             MemoryBasedPokerTablePersistence.json(), bus
@@ -411,7 +458,7 @@ class AcceptanceTest {
             install(WebSockets)
             install(Resources)
         })
-        return Triple(client(), client(), client())
+        return List(count) { client() }
     }
 
     private suspend fun createAndJoin(alice: PokerClient, bob: PokerClient, charlie: PokerClient): Int {
@@ -422,7 +469,7 @@ class AcceptanceTest {
     }
 
     /** Fold-cascades the current hand to completion, then has every client mark ready.
-     *  The last /ready call auto-starts the next round via the ready-up mechanic. */
+     *  The /ready that makes a majority auto-starts the next round; any after it are refused (no longer waiting). */
     private suspend fun playCompleteHandAndReadyUp(clients: List<PokerClient>, tableId: Int) {
         foldCascade(clients, tableId)
         for (client in clients) {

@@ -177,6 +177,10 @@ export interface GameStateUpdate {
   runoutOdds: RunoutOdds[]
   /** Main pot first, then side pots; amounts sum to `potTotal`. Empty when no hand is in play. */
   pots: PotView[]
+  /** The player who runs the table: only they deal a hand, start a new game or rename it. Null with no human left. */
+  ownerId: number | null
+  /** False until the owner deals this game's first hand; afterwards a ready majority deals each next one. */
+  firstHandDealt: boolean
 }
 
 /** One pot. `winnerIds` and `reason` are only set at a contested showdown. */
@@ -226,6 +230,8 @@ export function normalizeGameState(raw: GameStateUpdate): GameStateUpdate {
     activeVotes: raw.activeVotes ?? [],
     message: raw.message ?? null,
     runoutOdds: raw.runoutOdds ?? [],
+    ownerId: raw.ownerId ?? null,
+    firstHandDealt: raw.firstHandDealt ?? false,
     pots: (raw.pots ?? []).map((pot) => ({
       amount: pot.amount,
       contenderIds: pot.contenderIds ?? [],

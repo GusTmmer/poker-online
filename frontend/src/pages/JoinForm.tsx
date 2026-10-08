@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import styled from '@emotion/styled'
-import { useSession } from '../context/SessionContext'
+import { useSession } from '../context/useSession'
 import {
   FormPage,
   FormCard,

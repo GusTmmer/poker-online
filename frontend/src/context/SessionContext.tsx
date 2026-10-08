@@ -1,19 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getTableInfo, joinTable } from '../api/client'
 import type { TableInfoResponse } from '../api/types'
+import { SessionContext, type SessionContextValue } from './useSession'
 
-interface SessionContextValue {
-  tableId: number
-  myPlayerId: number | null
-  tableInfo: TableInfoResponse | null
-  loading: boolean
-  error: string | null
-  join: (playerName: string) => Promise<void>
-  refresh: () => Promise<void>
-}
-
-const SessionContext = createContext<SessionContextValue | null>(null)
-
+/** One table's session. Keyed by table id where it's rendered, so a different table starts from scratch. */
 export function SessionProvider({ tableId, children }: { tableId: number; children: ReactNode }) {
   const [tableInfo, setTableInfo] = useState<TableInfoResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -32,9 +22,15 @@ export function SessionProvider({ tableId, children }: { tableId: number; childr
     }
   }, [tableId])
 
+  // The first load. It ignores a response that lands after unmount (e.g. leaving for another table).
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    let current = true
+    getTableInfo(tableId)
+      .then((info) => { if (current) setTableInfo(info) })
+      .catch((e) => { if (current) setError(e instanceof Error ? e.message : 'Failed to load table') })
+      .finally(() => { if (current) setLoading(false) })
+    return () => { current = false }
+  }, [tableId])
 
   const join = useCallback(
     async (playerName: string) => {
@@ -58,10 +54,4 @@ export function SessionProvider({ tableId, children }: { tableId: number; childr
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
-}
-
-export function useSession() {
-  const ctx = useContext(SessionContext)
-  if (!ctx) throw new Error('useSession must be used within a SessionProvider')
-  return ctx
 }

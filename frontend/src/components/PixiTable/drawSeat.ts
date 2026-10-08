@@ -202,7 +202,7 @@ export interface SeatShowdown {
  * Fills `section` with a player's showdown cards, centered at x = 0:
  *
  *     HAND NAME
- *     [the five cards of the hand, highest first] ┊ [pocket₁ pocket₂ — when not both play]
+ *     [the five cards of the hand, highest first] ┊ [pocket₁ pocket₂ — dimmed, when not both play]
  *
  * Which cards, and which are ringed or dimmed, is `showdownRow`. On a crowded table the whole section
  * is shrunk afterwards (`fitShowdownRows`) so it doesn't run into its neighbours.

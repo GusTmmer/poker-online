@@ -46,7 +46,6 @@ class CloudTasksScheduler(
         // Enqueue off the calling coroutine — the gRPC call is blocking and must not stall game flow.
         scope.launch {
             runCatching {
-                val scheduleSeconds = (System.currentTimeMillis() + delayMs) / 1000
                 val task = Task.newBuilder()
                     .setHttpRequest(
                         HttpRequest.newBuilder()
@@ -57,7 +56,7 @@ class CloudTasksScheduler(
                             .setBody(ByteString.copyFromUtf8(body))
                             .build()
                     )
-                    .setScheduleTime(Timestamp.newBuilder().setSeconds(scheduleSeconds).build())
+                    .setScheduleTime(scheduleTime(System.currentTimeMillis() + delayMs))
                     .build()
                 client.createTask(queuePath, task)
             }.onFailure { log.error("Failed to enqueue {} task", label, it) }
@@ -74,5 +73,14 @@ class CloudTasksScheduler(
 
     companion object {
         private val log = LoggerFactory.getLogger(CloudTasksScheduler::class.java)
+
+        /**
+         * [epochMs] as a protobuf timestamp, milliseconds included. Whole seconds alone would floor the time
+         * and fire a turn's timeout up to a second before the deadline the player's clock shows.
+         */
+        fun scheduleTime(epochMs: Long): Timestamp = Timestamp.newBuilder()
+            .setSeconds(Math.floorDiv(epochMs, 1000L))
+            .setNanos((Math.floorMod(epochMs, 1000L) * 1_000_000L).toInt())
+            .build()
     }
 }

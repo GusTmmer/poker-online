@@ -20,7 +20,6 @@ dependencies {
     implementation("io.ktor:ktor-server-auth-jwt:3.1.1")
     implementation("io.ktor:ktor-server-resources:3.1.1")
     implementation("io.ktor:ktor-server-rate-limit:3.1.1")
-    implementation("io.ktor:ktor-server-forwarded-header:3.1.1")
 
     implementation("com.google.cloud:google-cloud-firestore:3.29.0")
     implementation("com.google.cloud:google-cloud-tasks:2.74.0")
@@ -43,6 +42,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Cloud Build has no Docker for the Firestore emulator: `-PskipEmulatorTests` leaves out that one suite
+    // (it already skips itself where Docker is missing, but a present-yet-unusable daemon would fail it).
+    if (project.hasProperty("skipEmulatorTests")) exclude("**/FirestoreTableUpdateBusTest*")
 }
 
 tasks.register<JavaExec>("runLocal") {

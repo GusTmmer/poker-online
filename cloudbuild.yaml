@@ -1,7 +1,7 @@
 # Continuous deployment for poker-server. Run by the `build-poker-server` Cloud Build trigger on every
 # push to `main` (service account: poker-build). Test → build → push → deploy:
 #
-#   1. engine + frontend unit tests (the Firestore-emulator server tests need Docker-in-Docker; skipped)
+#   1. engine + server + frontend tests (all but the Firestore-emulator suite, which needs Docker-in-Docker)
 #   2. build the Dockerfile (bundles the SPA and the server)
 #   3. push to the Artifact Registry path Cloud Run reads, tagged with the commit SHA and `latest`
 #   4. `gcloud run services replace` with infra/cloudrun-service.yaml, pinned to the SHA tag — the
@@ -14,7 +14,7 @@ steps:
   - id: engine-tests
     name: gradle:8.5-jdk21
     entrypoint: gradle
-    args: [':poker-engine:test', '--no-daemon']
+    args: [':poker-engine:test', ':server-gcp:test', '-PskipEmulatorTests', '--no-daemon']
 
   - id: frontend-tests
     name: node:22-alpine

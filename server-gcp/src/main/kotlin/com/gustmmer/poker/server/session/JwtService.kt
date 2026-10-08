@@ -94,3 +94,10 @@ fun RoutingCall.extractSession(jwtService: JwtService, tableId: Int): PlayerSess
 suspend fun RoutingCall.respondUnauthorized() {
     respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing session"))
 }
+
+/** The caller's session for [tableId]; when there is none, answers 401 and returns null — so `?: return@post`. */
+suspend fun RoutingCall.requireSession(jwtService: JwtService, tableId: Int): PlayerSession? =
+    extractSession(jwtService, tableId) ?: run {
+        respondUnauthorized()
+        null
+    }

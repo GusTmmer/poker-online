@@ -41,6 +41,10 @@ data class WireablePokerTableState(
     val initialPlayerCount: Int = 0,
     val activeVotes: List<ActiveVote> = emptyList(),
     val pendingRemovals: List<Int> = emptyList(),
+    /** 0 on records written before it existed — restored as one past the highest seated id. */
+    val nextPlayerId: Int = 0,
+    /** Null on records written before tables had owners — restored as the earliest-seated human. */
+    val ownerId: Int? = null,
 )
 
 /**
@@ -53,6 +57,31 @@ fun PokerTableState.turnTimeRemainingMs(now: Long): Long? {
 }
 
 fun PokerTableState.isGameOver(): Boolean = players.participating().size <= 1
+
+/**
+ * Whether this game has dealt its first hand. Until it has, only the owner can start play; after a restart
+ * the new game's first hand is the owner's again.
+ */
+fun PokerTableState.firstHandDealt(): Boolean = initialPlayerCount > 0
+
+/** Humans who are here to play: seated, not eliminated, and ONLINE. Readiness is measured against them. */
+fun PokerTableState.presentHumans(): List<Player> =
+    players.filter { !it.isBot && it.isParticipating() && it.status == PlayerStatus.ONLINE }
+
+/** True when more than half of the [presentHumans] are ready. */
+fun PokerTableState.majorityReady(): Boolean {
+    val present = presentHumans()
+    return present.isNotEmpty() && present.count { it.id in readyPlayers } * 2 > present.size
+}
+
+/**
+ * Who owns the table once [departing] players are gone: the current owner while they stay, otherwise the
+ * human who has been seated longest (ids are handed out in join order and never reused). Null with no human left.
+ */
+internal fun ownerAmong(players: List<Player>, currentOwner: Int?, departing: Set<Int> = emptySet()): Int? {
+    val staying = players.filter { !it.isBot && it.id !in departing }
+    return currentOwner?.takeIf { owner -> staying.any { it.id == owner } } ?: staying.minOfOrNull { it.id }
+}
 
 /** True when at least half of non-eliminated human players are IDLE. Computer players never idle. */
 fun PokerTableState.majorityIdle(): Boolean {
@@ -91,6 +120,16 @@ data class PokerTableState(
      * hand is cleared.
      */
     val pendingRemovals: Set<Int> = emptySet(),
+    /**
+     * The id the next player to join gets. Ids are never reused: a session cookie names its player by id, so
+     * a player who left or was kicked would otherwise take over whoever joined into their old id.
+     */
+    val nextPlayerId: Int = (players.maxOfOrNull { it.id } ?: -1) + 1,
+    /**
+     * The player who runs the table: only they can start a hand, start a new game, rename or open/close the
+     * table. Created as the table's creator; passes to the longest-seated human when the owner leaves.
+     */
+    val ownerId: Int? = null,
 ) : Wireable<WireablePokerTableState> {
 
     companion object {
@@ -135,6 +174,8 @@ data class PokerTableState(
                 initialPlayerCount = state.initialPlayerCount,
                 activeVotes = state.activeVotes,
                 pendingRemovals = state.pendingRemovals.filter { it in playerMap }.toSet(),
+                nextPlayerId = maxOf(state.nextPlayerId, (players.maxOfOrNull { it.id } ?: -1) + 1),
+                ownerId = ownerAmong(players, state.ownerId, departing = state.pendingRemovals.toSet()),
             )
         }
     }
@@ -158,5 +199,7 @@ data class PokerTableState(
         initialPlayerCount = initialPlayerCount,
         activeVotes = activeVotes,
         pendingRemovals = pendingRemovals.toList(),
+        nextPlayerId = nextPlayerId,
+        ownerId = ownerId,
     )
 }

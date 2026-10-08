@@ -36,6 +36,8 @@ function state(over: Partial<GameStateUpdate> = {}): GameStateUpdate {
     message: null,
     runoutOdds: [],
     pots: [],
+    ownerId: 1,
+    firstHandDealt: true,
     ...over,
   }
 }

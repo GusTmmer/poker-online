@@ -40,23 +40,24 @@ interface Props {
 }
 
 export function TurnTimer({ gameState, myPlayerId }: Props) {
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
+  const endsAt = gameState.turnTimerEndsAt
+  // Only the clock is state; the seconds shown are derived from it on every render.
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    const endsAt = gameState.turnTimerEndsAt
-    if (!endsAt) { setSecondsLeft(null); return }
-    // The clock holds at the full turn while the table catches up, then counts down.
-    const startsAt = gameState.turnClockStartsAt ?? 0
-
-    function tick() {
-      setSecondsLeft(Math.max(0, Math.ceil((endsAt! - Math.max(Date.now(), startsAt)) / 1000)))
-    }
-    tick()
+    if (!endsAt) return
+    const tick = () => setNow(Date.now())
+    // Catch up straight away: `now` stood still while no clock was running.
+    const first = setTimeout(tick, 0)
     const id = setInterval(tick, 500)
-    return () => clearInterval(id)
-  }, [gameState.turnTimerEndsAt, gameState.turnClockStartsAt])
+    return () => { clearTimeout(first); clearInterval(id) }
+  }, [endsAt])
 
-  if (secondsLeft === null || gameState.nextPlayerIdToAct == null) return null
+  if (!endsAt || gameState.nextPlayerIdToAct == null) return null
+
+  // The clock holds at the full turn while the table catches up (until turnClockStartsAt), then counts down.
+  const startsAt = gameState.turnClockStartsAt ?? 0
+  const secondsLeft = Math.max(0, Math.ceil((endsAt - Math.max(now, startsAt)) / 1000))
 
   const isMe = gameState.nextPlayerIdToAct === myPlayerId
   const urgent = secondsLeft <= 15

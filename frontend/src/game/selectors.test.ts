@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GameStateUpdate, PlayerView } from '../api/types'
-import { selectControls } from './selectors'
+import { selectControls, selectLobby } from './selectors'
 
 function player(over: Partial<PlayerView> & { id: number }): PlayerView {
   return {
@@ -35,6 +35,8 @@ function state(over: Partial<GameStateUpdate> = {}): GameStateUpdate {
     message: null,
     runoutOdds: [],
     pots: [],
+    ownerId: 1,
+    firstHandDealt: true,
     ...over,
   }
 }
@@ -109,5 +111,27 @@ describe('selectControls', () => {
     expect(c.amountToCall).toBe(100)
     expect(c.maxRaiseOnTop).toBe(0)
     expect(c.canRaise).toBe(false)
+  })
+})
+
+describe('selectLobby', () => {
+  it('names the owner, who alone can deal', () => {
+    expect(selectLobby(state()).ownerName).toBe('P1')
+    expect(selectControls(state(), 1).amIOwner).toBe(true)
+    expect(selectControls(state(), 2).amIOwner).toBe(false)
+  })
+
+  it('needs more than half of the present humans — bots and absent players left out', () => {
+    const s = state({
+      players: [
+        player({ id: 1 }),
+        player({ id: 2 }),
+        player({ id: 3 }),
+        player({ id: 4, status: 'OFFLINE' }),
+        player({ id: 5, botPersonality: 'BALANCED' }),
+      ],
+      readyPlayerIds: [2, 4, 5],
+    })
+    expect(selectLobby(s)).toMatchObject({ readyCount: 1, readyNeeded: 2 })
   })
 })

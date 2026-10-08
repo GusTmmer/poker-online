@@ -1,7 +1,6 @@
 package com.gustmmer.poker.server.timer
 
 import com.gustmmer.poker.GameStatus
-import com.gustmmer.poker.PokerTable
 import com.gustmmer.poker.PlayerStatus
 import com.gustmmer.poker.majorityIdle
 import com.gustmmer.poker.turnTimeRemainingMs
@@ -35,46 +34,64 @@ class TurnTimerManager(
     private val log = LoggerFactory.getLogger(TurnTimerManager::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+    /** What [startTimer] found when it looked at the turn. */
+    private sealed interface TurnStart {
+        /** No live turn to time: no betting round, or the game isn't running. */
+        data object NoTurn : TurnStart
+        /** The player to act is offline or idle: their turn is resolved at once instead. */
+        data object Absent : TurnStart
+        /** A clock was armed with this token and fires after [delayMs]. */
+        data class Armed(val token: Long, val delayMs: Long) : TurnStart
+    }
+
+    /**
+     * Arms the clock for whoever is to act. The turn is read and its clock committed in one transaction, so
+     * the clock always belongs to the turn it was computed for — a move landing in between makes the commit
+     * retry against the new turn.
+     */
     suspend fun startTimer(tableId: Int, durationMs: Long) {
         scheduler.cancel(tableId)
 
-        val state = loadTable(tableId, persistence) ?: return
-        val roundState = state.roundState ?: return
-        if (!roundState.pokerRoundStage.isBettingRound()) return
+        val started = withTable(tableId, persistence) { table ->
+            val state = table.currentState
+            val roundState = state.roundState
+            if (state.gameStatus != GameStatus.RUNNING || roundState == null || !roundState.pokerRoundStage.isBettingRound()) {
+                return@withTable ServiceResult.Ok(TurnStart.NoTurn)
+            }
 
-        val currentPlayer = roundState.playerOrdering.bettingPlayer()
+            val currentPlayer = roundState.playerOrdering.bettingPlayer()
+            if (currentPlayer.status == PlayerStatus.IDLE || currentPlayer.status == PlayerStatus.OFFLINE) {
+                return@withTable ServiceResult.Ok(TurnStart.Absent)
+            }
 
-        // The player whose turn it is isn't here — resolve their turn now rather than start a clock.
-        if (currentPlayer.status == PlayerStatus.IDLE || currentPlayer.status == PlayerStatus.OFFLINE) {
-            scope.launch { resolveExpiredTurns(tableId, durationMs) }
-            return
+            // The persisted start time IS the turn token: every new turn re-arms with a fresh timestamp, so
+            // a late or duplicate delivery of a prior turn's task no longer matches and is ignored.
+            val startedAt = Instant.now().toEpochMilli()
+            val presentation = PresentationPacing.advance(
+                state.presentation, roundState.players.size, roundState.actions, roundState.pokerRoundStage, startedAt,
+            )
+
+            // A computer player's "clock" is just its thinking time; the expiry plays its move (the screens show
+            // it once they catch up). A human's clock waits for their screen to show it's their turn.
+            val headStartMs = if (currentPlayer.isBot) 0L else PresentationPacing.headStartMs(presentation, startedAt)
+            val delayMs = if (currentPlayer.isBot) {
+                val thinkMs = table.botDecisionForCurrentPlayer()?.thinkMs ?: 0L
+                (thinkMs * botDelayScale).toLong()
+            } else {
+                headStartMs + durationMs
+            }
+
+            table.timerStarted(startedAt, startedAt + headStartMs, startedAt + delayMs, presentation)
+            ServiceResult.Ok(TurnStart.Armed(startedAt, delayMs))
         }
 
-        // The persisted start time IS the turn token: every new turn re-arms with a fresh timestamp, so
-        // a late or duplicate delivery of a prior turn's task no longer matches and is ignored.
-        val startedAt = Instant.now().toEpochMilli()
-        val presentation = PresentationPacing.advance(
-            state.presentation, roundState.players.size, roundState.actions, roundState.pokerRoundStage, startedAt,
-        )
-
-        // A computer player's "clock" is just its thinking time; the expiry plays its move (the screens show
-        // it once they catch up). A human's clock waits for their screen to show it's their turn.
-        val headStartMs = if (currentPlayer.isBot) 0L else PresentationPacing.headStartMs(presentation, startedAt)
-        val delayMs = if (currentPlayer.isBot) {
-            val thinkMs = PokerTable(state, persistence).botDecisionForCurrentPlayer()?.thinkMs ?: 0L
-            (thinkMs * botDelayScale).toLong()
-        } else {
-            headStartMs + durationMs
+        when (val start = (started as? ServiceResult.Ok)?.value) {
+            is TurnStart.Armed -> scheduler.scheduleTurnTimeout(tableId, token = start.token, delayMs = start.delayMs)
+            // The player whose turn it is isn't here — resolve their turn now rather than start a clock.
+            TurnStart.Absent -> scope.launch { resolveExpiredTurns(tableId, durationMs) }
+            TurnStart.NoTurn -> {}
+            null -> log.warn("Could not start the turn timer for table {}: {}", tableId, started)
         }
-
-        val persisted = withTable(tableId, persistence) {
-            it.timerStarted(startedAt, startedAt + headStartMs, startedAt + delayMs, presentation)
-            ServiceResult.Ok(Unit)
-        }
-        if (persisted is ServiceResult.Failed) {
-            log.warn("Could not persist turn-timer start for table {}: {}", tableId, persisted.error)
-        }
-        scheduler.scheduleTurnTimeout(tableId, token = startedAt, delayMs = delayMs)
     }
 
     fun cancelTimer(tableId: Int) {
@@ -88,20 +105,14 @@ class TurnTimerManager(
      * turn timer is armed for the next bettor, or stopped.
      */
     suspend fun settleAfterCommit(tableId: Int) {
-        withTable(tableId, persistence) { table ->
+        val settled = withTable(tableId, persistence) { table ->
             val round = table.currentState.roundState
             // Re-checked inside the transaction: a hand dealt in the gap is never clobbered.
             if (round != null && !round.pokerRoundStage.isBettingRound()) table.clearRoundState()
-            ServiceResult.Ok(Unit)
+            ServiceResult.Ok(table.currentState.config.turnTimerSeconds * 1000L)
         }
-
-        val state = loadTable(tableId, persistence) ?: return
-        val roundState = state.roundState
-        if (state.gameStatus == GameStatus.RUNNING && roundState != null && roundState.pokerRoundStage.isBettingRound()) {
-            startTimer(tableId, state.config.turnTimerSeconds * 1000L)
-        } else {
-            cancelTimer(tableId)
-        }
+        // startTimer cancels any running clock and arms one only if there is a live turn.
+        if (settled is ServiceResult.Ok) startTimer(tableId, settled.value) else cancelTimer(tableId)
     }
 
     /**
@@ -161,12 +172,14 @@ class TurnTimerManager(
      */
     suspend fun onTimerFired(tableId: Int, token: Long) {
         var autoPaused = false
+        var turnTimerMs = 0L
         val result = withTable(tableId, persistence) { table ->
             val s = table.currentState
             if (s.turnTimerStartedAt != token) return@withTable ServiceResult.Ok(false) // stale/superseded
             if (s.gameStatus != GameStatus.RUNNING) return@withTable ServiceResult.Ok(false) // paused/over
             val roundState = s.roundState ?: return@withTable ServiceResult.Ok(false)
             if (!roundState.pokerRoundStage.isBettingRound()) return@withTable ServiceResult.Ok(false)
+            turnTimerMs = s.config.turnTimerSeconds * 1000L
 
             if (roundState.playerOrdering.bettingPlayer().isBot) {
                 return@withTable ServiceResult.Ok(table.playBotTurn() != null)
@@ -185,7 +198,6 @@ class TurnTimerManager(
         if (result !is ServiceResult.Ok || !result.value) return
         if (autoPaused) return
 
-        val state = loadTable(tableId, persistence) ?: return
-        resolveExpiredTurns(tableId, state.config.turnTimerSeconds * 1000L)
+        resolveExpiredTurns(tableId, turnTimerMs)
     }
 }
